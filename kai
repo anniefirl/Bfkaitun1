@@ -4725,16 +4725,16 @@ end
     SecretsIslandMobs = {
         Jungle = {"Monkey","Gorilla"},
         ["Pirate Village"] = {"Pirate","Brute"},
-        Desert = {"Desert Bandit","Desert Officer"}
-        ["Frozen Village"] = {"Snow Bandit","Snowman"}
-        ["Marine Fortress"] = {"Chief Petty Officer"}
-        ["Lower Skylands"] = {"Sky Bandit","Dark Master"}
-        ["Upper Skylands"] = {"God's Guard","Shanda","Royal Squad"}
-        Prison = {"Prisoner","Dangerous Prisoner"}
-        Colosseum = {"Toga Warrior","Gladiator"}
-        ["Magma Village"] = {"Military Soldier","Military Spy"}
-        ["Underwater City"] = {"Fishman Warrior","Fishman Commando"}
-        ["Fountain City"] = {"Galley Pirate","Galley Captain"}
+        Desert = {"Desert Bandit","Desert Officer"},
+        ["Frozen Village"] = {"Snow Bandit","Snowman"},
+        ["Marine Fortress"] = {"Chief Petty Officer"},
+        ["Lower Skylands"] = {"Sky Bandit","Dark Master"},
+        ["Upper Skylands"] = {"God's Guard","Shanda","Royal Squad"},
+        Prison = {"Prisoner","Dangerous Prisoner"},
+        Colosseum = {"Toga Warrior","Gladiator"},
+        ["Magma Village"] = {"Military Soldier","Military Spy"},
+        ["Underwater City"] = {"Fishman Warrior","Fishman Commando"},
+        ["Fountain City"] = {"Galley Pirate","Galley Captain"},
     }
     SecretsDone = {}
     SecretsVisit = {}
@@ -4883,7 +4883,7 @@ end
                 local p = target.Parent
                 local cf = (p and p:IsA("BasePart")) and p.CFrame or nil
                 if not cf and p then
-                    local ok, c2 = pcall(function() return p:GetModelCFrame and p:GetModelCFrame() end)
+                    local ok, c2 = pcall(function() return p.GetModelCFrame and p:GetModelCFrame() end)
                     if ok then cf = c2 end
                 end
                 if cf then
