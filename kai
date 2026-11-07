@@ -1,3 +1,7 @@
+-- Tiro Kaitun Modulo v2.8 (Island Secrets engine: 39 First Sea secrets data +
+-- auto pipeline — chat-event response, keyword object M1, prompt/click firing,
+-- name combat, hostile sweep; minigames stay manual with hints. Active Sea 1
+-- Lv2800+, holds sea, TravelMain back from Sea 2/3. Toggle: AutoIslandSecrets).
 -- Tiro Kaitun Modulo v2.5 (English edition — all comments and UI text translated
 -- from Vietnamese/Portuguese; no logic changed).
 -- Tiro Kaitun Modulo v2.4 (supports Update 30 "Sea 1 Rework" 2026-09-05).
@@ -83,10 +87,10 @@ Config = {
     AutoSea2 = true,
     AutoSea3 = true,
     AutoRaidIce_TargetFragments = 5000,
-    -- [UPD30] Island Secrets: 40 manual quests (Rumor dialogue with Quest NPC) unlock
-    -- cap 2800 -> 3000. Script NOT yet automatic for secrets — this flag stays false until
-    -- secrets mechanism is reversed; turning it on has no effect yet.
-    AutoIslandSecrets = false,
+    -- [UPD30/v2.8] Island Secrets: 39 auto-assisted quests (Rumor NPCs) unlock
+    -- cap 2800 -> 3000. IslandSecretsTask handles events/kills/objects/prompts;
+    -- pure minigames (Q&A, aiming, puzzles, codes, rhythm) show manual hints.
+    AutoIslandSecrets = true,
 }
 print("[Tiro] Script loaded, waiting for game load...")
 repeat task.wait() until game:IsLoaded()
@@ -112,6 +116,12 @@ local lastChange = tick()
 -- ============================================================
 _G.ChooseWP = "Melee"  -- Default Melee (can be changed to Sword, Gun, Blox Fruit)
 _G.SelectWeapon = nil
+
+-- [MASTER SWITCH] AutoFarm OFF pauses EVERYTHING (movement, attacks, quests,
+-- bosses, collect, seas, haki spam, panic escapes, gacha). All loops below
+-- check "_G.AutoFarm == false or _G.Stop" and go idle while paused.
+if _G.AutoFarm == nil then _G.AutoFarm = true end
+if _G.Stop == nil then _G.Stop = false end
 
 -- Automatic weapon update flow
 task.spawn(function()
@@ -1016,6 +1026,10 @@ function hoangtuveu()
         while task.wait(Config.PanicMode.CheckInterval) do
             pcall(function()
                 if not Config.PanicMode.Enabled then return end
+                if _G.AutoFarm == false or _G.Stop then -- [MASTER] paused: no escapes
+                    if _G.PanicModeActive then _G.PanicModeActive = false escapeY = nil end
+                    return
+                end
                 local char = LocalPlayer.Character
                 local hum  = char and char:FindFirstChildOfClass("Humanoid")
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -1072,6 +1086,7 @@ function hoangtuveu()
         while task.wait(1) do
             pcall(function()
                 if not Config.AutoKen then return end
+                if _G.AutoFarm == false or _G.Stop then return end -- [MASTER] paused
                 if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HasKen") then
                     return -- already opened, stop spamming
                 end
@@ -1373,6 +1388,7 @@ end
         "SpecialBossesTask", "SwordBossTask", "BossesTask",
         "RaidController", "AutoRaidIce",
         "CakePrinceTask", "MeleesController",
+        "IslandSecrets",
         "LevelFarm", "Tushita", 'Yama',
         "Saber", "CursedDualKatana", "SoulGuitar", "EvoRace", "RaceAwakening",
         -- [FIXED - code conflict detected during full scan] Removing "Wenlocktoad"
@@ -1697,7 +1713,9 @@ end
     end
     task.spawn(function()
         while task.wait() do
-            if block and block.Parent == workspace then
+            if _G.AutoFarm == false or _G.Stop then
+                getgenv().OnFarm = false
+            elseif block and block.Parent == workspace then
                 getgenv().OnFarm = shouldTween and true or false
             else
                 getgenv().OnFarm = false
@@ -1781,6 +1799,7 @@ end
         -- caller moves at the same speed; currently unused).
         TweenInstance2 = Services.TweenService:Create(W, TweenInfo.new(CaculateDistance(W.CFrame, a) / 180, Enum.EasingStyle.Linear), {CFrame = ConvertTo(CFrame, a) - Vector3.new(0, 0, 0)})
         TweenInstance2:Play()
+        _G._FarmTween2 = TweenInstance2
     end
     function CheckItem(itemName)
         local bp = game.Players.LocalPlayer:FindFirstChild('Backpack')
@@ -1808,6 +1827,7 @@ end
     -- ============================================================
     function TweenController.Create(W)
         if not W or TweenDebounce then return end
+        if _G.AutoFarm == false or _G.Stop then return end -- [MASTER] paused: no movement
         local a = typeof(W) ~= 'CFrame' and ConvertTo(CFrame, W) or W
         if TweenInstance then pcall(function() TweenInstance:Cancel() end) end
         local character = game.Players.LocalPlayer.Character
@@ -1866,8 +1886,13 @@ end
         shouldTween = true
         TweenInstance = Services.TweenService:Create(block, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = a})
         TweenInstance:Play()
+        _G._FarmTween = TweenInstance
         task.spawn(function()
             while TweenInstance and TweenInstance.PlaybackState == Enum.PlaybackState.Playing do
+                if _G.AutoFarm == false or _G.Stop then
+                    pcall(function() TweenInstance:Cancel() end)
+                    break
+                end
                 if not shouldTween then
                     pcall(function() TweenInstance:Cancel() end)
                     break
@@ -1934,9 +1959,12 @@ end
         D:FireServer(unpack(y))
     end
     task.spawn(function()
-        while task.wait(.06) do if _G.FastAttack == os.time() then pcall(function() h:Attack() end) end end
+        while task.wait(.06) do if _G.FastAttack == os.time() and _G.AutoFarm ~= false and not _G.Stop then pcall(function() h:Attack() end) end end
     end)
-function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
+function W.Attack(target)
+    if _G.AutoFarm == false or _G.Stop then return end -- [MASTER] paused: no attacks
+    pcall(function() _G.FastAttack = os.time() end)
+end
 
     CombatController = {GRAB = false, GRAB_DISTANCE = SeaIndex == 1 and 250 or 350, MAX_ATTACK_DURATION = 2, MAX_ATTACK_DURATION_2 = 60, LEVITATE_TIME = 0, CurrentIndex = 1}
 
@@ -1954,6 +1982,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     BringEnemy = function()
         pcall(function()
+            if _G.AutoFarm == false or _G.Stop then return end -- [MASTER] paused
             if not Config.BringMobs or not getgenv().BringMonster then return end
             if not PosMon then return end
 
@@ -2033,6 +2062,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     task.spawn(function()
         while task.wait(0.05) do
+            if _G.AutoFarm == false or _G.Stop then continue end -- [MASTER] paused
             BringEnemy()
         end
     end)
@@ -2122,6 +2152,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 local w, b = 0, os.time()
                 while task.wait() do
                     if _G.Stop then return end
+                    if _G.AutoFarm == false then -- [MASTER] paused: stop mid-fight
+                        pcall(function() if TweenInstance then TweenInstance:Cancel() end end)
+                        getgenv().OnFarm = false
+                        return
+                    end
                     if ScriptStorage.Tools["Sweet Chalice"] and getsenv(game.ReplicatedStorage.GuideModule)["_G"]["InCombat"] then
                         pcall(function() if TweenInstance then TweenInstance:Cancel() end end) -- [FIXED] do not tween back to (0,0,0) when Sweet Chalice InCombat
                         return
@@ -3196,6 +3231,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         while task.wait(30) do
             pcall(function()
                 if not Config.Items.AutoRandomFruit then return end
+                if _G.AutoFarm == false or _G.Stop then return end -- [MASTER] paused
                 local ok, inventoryFruits = pcall(function()
                     return Remotes.CommF_:InvokeServer("getInventoryFruits")
                 end)
@@ -4628,6 +4664,416 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- ============================================================
     -- COLLECT DROPS
     -- ============================================================
+    -- ============================================================
+    -- ISLAND SECRETS (Update 30, First Sea) - v2.8
+    -- 39 secrets via Rumor NPCs; each grants +5 levels / +5 cap.
+    -- Engine: system-chat event response, keyword object scan +
+    -- M1 spam, prompt/click firing, name-based combat, hostile
+    -- sweep. Minigames (Q&A, aiming, pushing, puzzles, code entry,
+    -- cannon/turret play, bell rhythm, statue weapon sets) cannot
+    -- be solved blind - those show a manual hint and are skipped.
+    -- Active only: level 2800+, AutoIslandSecrets on, master on.
+    -- In Sea 1 it holds the sea (suppresses AutoSea2/3); in Sea 2/3
+    -- it tries TravelMain (capped attempts) to get back to Sea 1.
+    -- Progress: level-up while a target is active credits it done,
+    -- persisted to writefile. All misses are safe no-ops.
+    -- ============================================================
+    SecretsList = {
+        { id="mt-early-access", island="Middle Town", name="Early Access (Janus)", manual="MANUAL: break the window above the broken cart by Experienced Captain, wait for Janus (spawns rarely), talk to him, grab the key by the Aura Editor at Robotmega, use the back door computer, return to Janus." },
+        { id="mt-lookout", island="Middle Town", name="Lookout Duty", manual="MANUAL: talk to Experienced Captain (Keep Lookout), memorize ship sail colors across 4 waves, answer 4/4. Record the screen to rewatch." },
+        { id="mt-treasure", island="Middle Town", name="X Marks the Spot", manual="MANUAL: M1 trees/barrels/lamps/boxes with Melee until one shakes, follow the map pieces, dig the treasure, kill 2-4 Skeletons." },
+        { id="jungle-zipline", island="Jungle", name="Zipline Repair", manual="MANUAL: pick up the grappling hook by the big tree, climb the platform, aim at the far point until green and fire it." },
+        { id="jungle-monkey", island="Jungle", name="The Thieving Monkey", mobs={"Monkey","Thief Monkey","Thieving Monkey"}, keys={"footprint","track","tree"} },
+        { id="jungle-gorilla", island="Jungle", name="Awakened Gorilla King", event="The jungle is suddenly overflowing with bananas...", mobs={"Gorilla King","Awakened Gorilla King","Gorilla"}, keys={"banana","tree"} },
+        { id="pv-windmill", island="Pirate Village", name="Free the Windmill", keys={"rope","windmill","blade","sail"} },
+        { id="pv-tavern", island="Pirate Village", name="Tavern Brawl", event="Trouble has broken out at the tavern!", mobs={"Tavern Pirate"}, keys={"door","tavern"} },
+        { id="pv-chef", island="Pirate Village", name="Awakened Chef", event="A curious smell is brewing from the Chef's kitchen at Pirate Village.", mobs={"Chef","Awakened Chef"}, keys={"cauldron","pot","stew"} },
+        { id="de-monolith", island="Desert", name="Rune Cleanup", keys={"monolith","rune","relic","stone"} },
+        { id="de-hasan", island="Desert", name="Save Hasan", mobs={"Skeleton","Desert Skeleton"}, keys={"chest","hasan","silver"} },
+        { id="de-cactus", island="Desert", name="Prickly Harvest", keys={"cactus"} },
+        { id="fv-teacher", island="Frozen Village", name="Breaking the Ice", keys={"ice","frozen","teacher","block"} },
+        { id="fv-snowman", island="Frozen Village", name="Build A Snowman", manual="MANUAL: during heavy snow, touch snow piles to make snowballs, roll and push 3 together into a snowman, then talk to the Villager." },
+        { id="fv-yeti", island="Frozen Village", name="Awakened Yeti", event="A dark energy awakens...", mobs={"Yeti","Awakened Yeti"}, keys={"ice","block"} },
+        { id="mf-flag", island="Marine Fortress", name="Raise the Flag", manual="MANUAL: talk to Parlus (watchtower), fetch the rope (far left by the stand), return to the flagpole, stay in the circle and dodge cannon fire." },
+        { id="mf-raid", island="Marine Fortress", name="Pirate Raid", event="Enemy ships are closing in on the Marine Fortress!|Lookouts have spotted pirate sails", keys={"cannon","turret"}, tip="Use the fortress turrets (interact) to sink every ship, about 2 hits each." },
+        { id="mf-va", island="Marine Fortress", name="Awakened Vice Admiral", event="Military weaponry has been unlocked. An alarm has sounded at Marine Fortress!", mobs={"Vice Admiral","Awakened Vice Admiral"}, keys={"cannon","building"} },
+        { id="ls-castle", island="Lower Skylands", name="Return the Treasure", mobs=nil, keys={"hatch","roof","vault","paper","chest"}, tip="After clearing invaders, read the paper for the 4-digit vault code (manual entry)." },
+        { id="ls-cloud", island="Lower Skylands", name="Unexpected Gift (Golden Cloud)", event="A secret cloud has appeared over the Skylands!", keys={"cloud"}, tip="Hit the golden cloud 3 times, open the diamond chest, kill the wave, use the dropped key." },
+        { id="ls-bolt", island="Lower Skylands", name="Missing Lightning Bolt", keys={"cloud"}, tip="Destroy the dark flashing cloud, bring the bolt to the Mad Scientist." },
+        { id="us-temple", island="Upper Skylands", name="The Old Temple", manual="MANUAL: talk to Sky Quest Giver 2, break the temple door, rotate the towers so the beams form a loop, grab the intel, run back while dodging lightning." },
+        { id="us-warlord", island="Upper Skylands", name="Awakened Sky Warlord", event="A storm brews in the upper skylands...", mobs={"Sky Warlord","Awakened Sky Warlord","Wysper"}, keys={"cloud"} },
+        { id="us-bell", island="Upper Skylands", name="Awakened Lightning God", event="The bell shimmers in upper skylands...", mobs={"Lightning God","Thunder God","Awakened Lightning God"}, keys={"bell"}, tip="Ring the bell with the shown weapon type 6 times in a row (manual rhythm)." },
+        { id="pr-break", island="Prison", name="Prison Break", mobs={"Prisoner","Dangerous Prisoner"}, tip="Three escapees: one on the wall, one digging, one on a raft. Talk to the Jail Keeper after." },
+        { id="pr-coat", island="Prison", name="Mysterious Key (Pink Coat)", keys={"key","coat","balcony","warden"} },
+        { id="pr-warden", island="Prison", name="Awakened Warden", event="A cell creaks open...", mobs={"Warden","Awakened Warden"}, keys={"lever"}, tip="Levers left to right: 2nd, 3rd, 4th, 1st (try the prompt scan first)." },
+        { id="co-statues", island="Colosseum", name="Previous Champions", keys={"statue"}, tip="Each statue needs its weapon type: Sword, Blox Fruit, Gun, Melee. The script attempts with your current weapon." },
+        { id="co-gladiator", island="Colosseum", name="Gladiatorial Combat", mobs={"Gladiator","Upgraded Gladiator","Supreme Gladiator"} },
+        { id="co-crowd", island="Colosseum", name="Crowded Colosseum", event="A roar of excitement echoes from the Colosseum.", manual="MANUAL: after the chat message, shoot the grey target on a pillar, then hit 20 floating targets in 90 seconds." },
+        { id="mg-nest", island="Magma Village", name="Magma Nest", mobs={"Magma Elemental","Elemental"}, keys={"geyser","nest","crater"} },
+        { id="mg-drill", island="Magma Village", name="Magma Ore Extraction", event="A loud drilling is shaking the Magma Village.", keys={"elevator","drill","mine"} },
+        { id="mg-general", island="Magma Village", name="Awakened Magma General", event="A rumbling echoes out to the sea...", mobs={"Magma General","Magma Admiral","Awakened Magma General"}, keys={"geyser"} },
+        { id="uc-bubble", island="Underwater City", name="Ride the Bubble", keys={"bubble","coral"} },
+        { id="uc-mirror", island="Underwater City", name="Scattered Light", manual="MANUAL: right of Fishman Lord castle, rotate the crystals so the light beam chain hits the dark wall symbol, free the Water Kung-fu Teacher." },
+        { id="uc-fishlord", island="Underwater City", name="Awakened Fishman Lord", event="The water is stirring - the Fishman Lord has risen...", mobs={"Fishman Lord","Awakened Fishman Lord"}, keys={"clam","shell","pearl"} },
+        { id="fc-pipes", island="Fountain City", name="Pipe Repairs", keys={"pipe","fountain"} },
+        { id="fc-sewer", island="Fountain City", name="Sewer Gang", keys={"platform","manhole","sewer","grate"} },
+        { id="fc-cyborg", island="Fountain City", name="Awakened Cyborg", event="The junkyard has been magnetized by lightning...", mobs={"Cyborg","Awakened Cyborg"}, keys={"wire","junkyard"} },
+        { id="finale", island="Middle Town", name="The Finale (all islands)", manual="MANUAL FINAL: go to the Middle Town teleporter and select every island IN ORDER without teleporting: Starter > Jungle > Pirate Village > Desert > Frozen > Fortress > Lower Sky > Prison > Colosseum > Magma > Underwater > Upper Sky > Fountain." },
+    }
+    SecretsById = {}
+    for _, s in ipairs(SecretsList) do SecretsById[s.id] = s end
+    SecretsIslandMobs = {
+        Jungle = {"Monkey","Gorilla"},
+        ["Pirate Village"] = {"Pirate","Brute"},
+        Desert = {"Desert Bandit","Desert Officer"}
+        ["Frozen Village"] = {"Snow Bandit","Snowman"}
+        ["Marine Fortress"] = {"Chief Petty Officer"}
+        ["Lower Skylands"] = {"Sky Bandit","Dark Master"}
+        ["Upper Skylands"] = {"God's Guard","Shanda","Royal Squad"}
+        Prison = {"Prisoner","Dangerous Prisoner"}
+        Colosseum = {"Toga Warrior","Gladiator"}
+        ["Magma Village"] = {"Military Soldier","Military Spy"}
+        ["Underwater City"] = {"Fishman Warrior","Fishman Commando"}
+        ["Fountain City"] = {"Galley Pirate","Galley Captain"}
+    }
+    SecretsDone = {}
+    SecretsVisit = {}
+    SecretsVisits = {}
+    SecretsCurrent = nil
+    SecretsCurrentT = 0
+    SecretsBaseLevel = nil
+    SecretsTravel = { n = 0, t = 0 }
+    SecretsHopT = os.time()
+    function SecretsPlayerName()
+        local p = game:GetService("Players").LocalPlayer
+        return (p and p.Name) or "player"
+    end
+    function SecretsFileName()
+        return ".tdif-secrets-" .. SecretsPlayerName()
+    end
+    function SecretsSave()
+        if not writefile then return end
+        pcall(function()
+            local ids = {}
+            for id in pairs(SecretsDone) do table.insert(ids, id) end
+            writefile(SecretsFileName(), table.concat(ids, ","))
+        end)
+    end
+    pcall(function()
+        if readfile and isfile and isfile(SecretsFileName()) then
+            local s = readfile(SecretsFileName())
+            if type(s) == "string" then
+                for id in string.gmatch(s, "([^,]+)") do SecretsDone[id] = true end
+            end
+        end
+    end)
+    function SecretsAllDone()
+        for _, s in ipairs(SecretsList) do
+            if s.id ~= "finale" and not SecretsDone[s.id] and (SecretsVisits[s.id] or 0) < 5 then
+                return false
+            end
+        end
+        return true
+    end
+    function SecretsOnCd(s)
+        local last = SecretsVisit[s.id]
+        if not last then return false end
+        local cd = s.manual and 1800 or 900
+        return os.time() - last < cd
+    end
+    function SecretsAnchor(island)
+        local mobs = SecretsIslandMobs[island]
+        if not mobs then return nil end
+        for _, m in ipairs(mobs) do
+            local regs = ScriptStorage.MobRegions and ScriptStorage.MobRegions[m]
+            if regs and #regs > 0 then return regs[1] end
+        end
+        return nil
+    end
+    function SecretsPlayerPos()
+        local c = game:GetService("Players").LocalPlayer.Character
+        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+        if hrp then return hrp.CFrame end
+        return nil
+    end
+    function SecretsMobExists(m)
+        local en = workspace:FindFirstChild("Enemies")
+        if not en then return false end
+        for _, e in ipairs(en:GetChildren()) do
+            if e.Name == m then
+                local h = e:FindFirstChildOfClass("Humanoid")
+                local rp = e:FindFirstChild("HumanoidRootPart")
+                if h and rp and h.Health > 0 then return true end
+            end
+        end
+        return false
+    end
+    -- nearest part/model whose name contains any keyword (case-insensitive)
+    function SecretsFindObject(keys, center, radius)
+        if not keys or not center then return nil end
+        local root = workspace:FindFirstChild("Map") or workspace
+        local me = game:GetService("Players").LocalPlayer
+        local best, bestD = nil, radius or 600
+        local checked = 0
+        local function consider(obj, cf)
+            if not cf then return end
+            local d = (Vector3.new(cf.X, cf.Y, cf.Z) - Vector3.new(center.X, center.Y, center.Z)).Magnitude
+            if d < bestD then bestD = d best = obj end
+        end
+        local descs = root:GetDescendants()
+        for _, o in ipairs(descs) do
+            checked = checked + 1
+            if checked > 6000 then break end
+            if o == workspace:FindFirstChild("Rip_Indra") then continue end
+            if me.Character and o:IsDescendantOf(me.Character) then continue end
+            local lname = string.lower(o.Name)
+            local hit = false
+            for _, k in ipairs(keys) do
+                if string.find(lname, string.lower(k), 1, true) then hit = true break end
+            end
+            if hit then
+                if o:IsA("BasePart") then
+                    consider(o, o.CFrame)
+                elseif o:IsA("Model") then
+                    local ok, cf = pcall(function() return o:GetModelCFrame() end)
+                    if ok and cf then consider(o, cf) end
+                elseif o:IsA("ClickDetector") or o:IsA("ProximityPrompt") then
+                    local p = o.Parent
+                    if p and p:IsA("BasePart") then consider(p, p.CFrame) end
+                end
+            end
+        end
+        return best
+    end
+    function SecretsM1Spam(secs)
+        local me = game:GetService("Players").LocalPlayer
+        pcall(function()
+            local toolName = (_G.SelectWeapon and CheckItem(_G.SelectWeapon) and _G.SelectWeapon) or "Melee"
+            FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(toolName)
+        end)
+        local t0 = os.clock()
+        while os.clock() - t0 < (secs or 8) do
+            if _G.AutoFarm == false or _G.Stop then return end
+            pcall(function()
+                local ch = me.Character
+                local tool = ch and ch:FindFirstChildOfClass("Tool")
+                if tool then tool:Activate() end
+            end)
+            pcall(function() W:Attack("SecretsM1") end)
+            task.wait(0.3)
+        end
+    end
+    function SecretsFireInteracts(radius)
+        local pos = SecretsPlayerPos()
+        if not pos then return end
+        local me = game:GetService("Players").LocalPlayer
+        local fired = 0
+        local root = workspace:FindFirstChild("Map") or workspace
+        local descs = root:GetDescendants()
+        local checked = 0
+        for _, o in ipairs(descs) do
+            checked = checked + 1
+            if checked > 6000 then break end
+            if fired >= 12 then break end
+            if me.Character and o:IsDescendantOf(me.Character) then continue end
+            local target = nil
+            if o:IsA("ProximityPrompt") then target = o
+            elseif o:IsA("ClickDetector") then target = o end
+            if target then
+                local p = target.Parent
+                local cf = (p and p:IsA("BasePart")) and p.CFrame or nil
+                if not cf and p then
+                    local ok, c2 = pcall(function() return p:GetModelCFrame and p:GetModelCFrame() end)
+                    if ok then cf = c2 end
+                end
+                if cf then
+                    local d = (Vector3.new(cf.X, cf.Y, cf.Z) - Vector3.new(pos.X, pos.Y, pos.Z)).Magnitude
+                    if d <= (radius or 60) then
+                        if o:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+                            if pcall(fireproximityprompt, o) then fired = fired + 1 end
+                        elseif o:IsA("ClickDetector") and typeof(fireclickdetector) == "function" then
+                            if pcall(fireclickdetector, o) then fired = fired + 1 end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    function SecretsKillNearby()
+        if _G.AutoFarm == false or _G.Stop then return end
+        local en = workspace:FindFirstChild("Enemies")
+        if not en then return end
+        local pos = SecretsPlayerPos()
+        for _, e in ipairs(en:GetChildren()) do
+            if _G.AutoFarm == false or _G.Stop then return end
+            if e.Name ~= "Core" then
+                local h = e:FindFirstChildOfClass("Humanoid")
+                local rp = e:FindFirstChild("HumanoidRootPart")
+                if h and rp and h.Health > 0 then
+                    if not pos or (rp.Position - pos.Position).Magnitude < 400 then
+                        SetTask("SubTask", "Secrets clearing: " .. tostring(e.Name))
+                        pcall(function() CombatController.Attack(e.Name) end)
+                        return
+                    end
+                end
+            end
+        end
+    end
+    function SecretsWork(t)
+        if _G.AutoFarm == false or _G.Stop then return end
+        if t.tip then SetTask("MainTask", "Island Secrets | " .. t.name) end
+        SetTask("MainTask", "Island Secrets | " .. t.name)
+        local anchor = SecretsAnchor(t.island)
+        if anchor then
+            SetTask("SubTask", "Traveling: " .. t.island)
+            pcall(function() TweenController.Create(anchor + Vector3.new(0, 30, 0)) end)
+            task.wait(1.5)
+        end
+        if _G.AutoFarm == false or _G.Stop then return end
+        if t.mobs then
+            for _, m in ipairs(t.mobs) do
+                if _G.AutoFarm == false or _G.Stop then return end
+                if SecretsMobExists(m) then
+                    SetTask("SubTask", "Fighting: " .. m)
+                    pcall(function() CombatController.Attack(m) end)
+                    break
+                end
+            end
+        end
+        if _G.AutoFarm == false or _G.Stop then return end
+        if t.keys then
+            local center = SecretsPlayerPos()
+            local obj = SecretsFindObject(t.keys, center, 600)
+            if obj then
+                local cf = nil
+                pcall(function()
+                    if obj:IsA("BasePart") then cf = obj.CFrame
+                    elseif obj:IsA("Model") then cf = obj:GetModelCFrame() end
+                end)
+                if cf then
+                    SetTask("SubTask", "Working object: " .. tostring(obj.Name))
+                    pcall(function() TweenController.Create(cf + Vector3.new(0, 8, 0)) end)
+                    task.wait(1)
+                    SecretsM1Spam(8)
+                end
+            end
+        end
+        if _G.AutoFarm == false or _G.Stop then return end
+        SecretsFireInteracts(60)
+        if _G.AutoFarm == false or _G.Stop then return end
+        SecretsKillNearby()
+        if t.tip then SetTask("SubTask", t.tip) task.wait(2) end
+    end
+    -- system-chat event watcher: awakened/random secrets announce themselves
+    task.spawn(function()
+        while task.wait(10) do
+            pcall(function()
+                if _G._SecretChatHooked then return end
+                local tcs = game:GetService("TextChatService")
+                local tc = tcs:FindFirstChild("TextChannels")
+                local sys = tc and tc:FindFirstChild("RBXSystem")
+                if sys and sys.MessageReceived then
+                    _G._SecretChatHooked = true
+                    sys.MessageReceived:Connect(function(msg)
+                        pcall(function()
+                            local txt = tostring(msg.Text or msg.PrefixText or "")
+                            for _, s in ipairs(SecretsList) do
+                                if s.event then
+                                    for variant in string.gmatch(s.event, "([^|]+)") do
+                                        if string.find(txt, variant, 1, true) then
+                                            _G.SecretEvent = { id = s.id, t = os.time() }
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                    end)
+                end
+            end)
+        end
+    end)
+    FunctionsHandler.IslandSecrets:RegisterMethod("Refresh", function()
+        if Config.AutoIslandSecrets == false then _G.SecretsHoldSea = false return nil end
+        if _G.AutoFarm == false or _G.Stop then _G.SecretsHoldSea = false return nil end
+        local lvl = (ScriptStorage.PlayerData and ScriptStorage.PlayerData.Level) or 0
+        -- credit a level-up gained while a target was active
+        if SecretsBaseLevel and lvl > SecretsBaseLevel and SecretsCurrent and os.time() - SecretsCurrentT < 900 then
+            SecretsDone[SecretsCurrent] = true
+            SecretsSave()
+            SecretsCurrent = nil
+        end
+        if not SecretsBaseLevel or lvl > SecretsBaseLevel then SecretsBaseLevel = lvl end
+        if lvl >= 3000 then _G.SecretsHoldSea = false return nil end
+        if lvl < 2800 then _G.SecretsHoldSea = false return nil end
+        -- finale becomes eligible once everything else is done/seen
+        if SecretsAllDone() then
+            if not SecretsDone["finale"] and not SecretsOnCd(SecretsById["finale"]) then
+                if SeaIndex == 1 then _G.SecretsHoldSea = true return SecretsById["finale"] end
+            end
+            _G.SecretsHoldSea = false
+            return nil
+        end
+        if SeaIndex ~= 1 then
+            -- need to go back to Sea 1 (capped attempts, then yield)
+            if os.time() - SecretsTravel.t > 600 then SecretsTravel = { n = 0, t = os.time() } end
+            if SecretsTravel.n >= 3 then return nil end
+            return { action = "travel" }
+        end
+        -- hop assist: 45 min with no completion -> new server for event spawns
+        if os.time() - SecretsHopT > 2700 then
+            SecretsHopT = os.time()
+            pcall(function() Hop() end)
+            return nil
+        end
+        -- priority: live event announced in chat
+        local ev = _G.SecretEvent
+        if ev and os.time() - ev.t < 600 then
+            local t = SecretsById[ev.id]
+            if t and not SecretsDone[t.id] and not SecretsOnCd(t) then
+                _G.SecretsHoldSea = true
+                return t
+            end
+        end
+        for _, t in ipairs(SecretsList) do
+            if t.id ~= "finale" and not SecretsDone[t.id] and not SecretsOnCd(t) then
+                _G.SecretsHoldSea = true
+                return t
+            end
+        end
+        _G.SecretsHoldSea = false
+        return nil
+    end)
+    FunctionsHandler.IslandSecrets:RegisterMethod("Start", function(t)
+        if type(t) ~= "table" then return end
+        if _G.AutoFarm == false or _G.Stop then return end
+        if t.action == "travel" then
+            SecretsTravel.n = SecretsTravel.n + 1
+            SecretsTravel.t = os.time()
+            SetTask("MainTask", "Island Secrets | returning to Sea 1")
+            SetTask("SubTask", "TravelMain attempt " .. tostring(SecretsTravel.n))
+            pcall(function() Remotes.CommF_:InvokeServer("TravelMain") end)
+            task.wait(5)
+            return
+        end
+        SecretsCurrent = t.id
+        SecretsCurrentT = os.time()
+        SecretsVisit[t.id] = os.time()
+        SecretsVisits[t.id] = (SecretsVisits[t.id] or 0) + 1
+        if t.id == "finale" and SecretsVisits[t.id] >= 3 then
+            SecretsDone["finale"] = true
+            SecretsSave()
+        end
+        if t.manual then
+            SetTask("MainTask", "Island Secrets | " .. t.name)
+            SetTask("SubTask", t.manual)
+            task.wait(3)
+            return
+        end
+        pcall(SecretsWork, t)
+    end)
+    -- [SECRETS] hook into task dispatch before LevelFarm (added to TasksOrder).
+
     FunctionsHandler.CollectDrops:RegisterMethod("Refresh", function()
         if _G.AutoCollect == false then return nil end
         local k = {}
@@ -5906,7 +6352,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local lastWrote = nil
         while task.wait() do
             if not _G.Stop then
-                NearbyHopHandler()
+                if _G.AutoFarm ~= false then NearbyHopHandler() end -- [MASTER] paused: no hopping
                 local char = LocalPlayer.Character
                 local hum = char and char:FindFirstChild('Humanoid')
                 if hum and hum.Sit then
@@ -5949,7 +6395,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- ============================================================
     task.spawn(function()
         while task.wait(0.5) do
-            if Config.AutoSea2 then
+            if Config.AutoSea2 and _G.AutoFarm ~= false and not _G.Stop and not _G.SecretsHoldSea then
                 pcall(function()
                     if ScriptStorage.PlayerData.Level >= 700 and SeaIndex ~= 2 then
                         _G.SeaTransitionActive = true  -- [ADDED] synchronize with AutoSea3 to prevent LevelFarm from stealing tween
@@ -5958,11 +6404,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                             Remotes.CommF_:InvokeServer("DressrosaQuestProgress", "Detective")
                             FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Key")
                             TweenController.Create(CFrame.new(1347.71, 37.38, -1325.65))
-                            repeat task.wait() until not Config.AutoSea2 or (HumanoidRootPart and (HumanoidRootPart.Position - Vector3.new(1347.71, 37.38, -1325.65)).Magnitude < 5)
+                            repeat task.wait() until not Config.AutoSea2 or _G.AutoFarm == false or _G.Stop or (HumanoidRootPart and (HumanoidRootPart.Position - Vector3.new(1347.71, 37.38, -1325.65)).Magnitude < 5)
                         elseif iceDoor and iceDoor.CanCollide == false and iceDoor.Transparency == 1 then
                             if workspace.Enemies:FindFirstChild("Ice Admiral") then
                                 CombatController.Attack("Ice Admiral")
-                                repeat task.wait() until not Config.AutoSea2 or not workspace.Enemies:FindFirstChild("Ice Admiral") or workspace.Enemies["Ice Admiral"].Humanoid.Health <= 0
+                                repeat task.wait() until not Config.AutoSea2 or _G.AutoFarm == false or _G.Stop or not workspace.Enemies:FindFirstChild("Ice Admiral") or workspace.Enemies["Ice Admiral"].Humanoid.Health <= 0
                                 Remotes.CommF_:InvokeServer("TravelDressrosa")
                             else
                                 TweenController.Create(CFrame.new(1347.71, 37.38, -1325.65))
@@ -5987,7 +6433,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         while task.wait(0.5) do
             if not Config.AutoSea3 then _G.SeaTransitionActive = false end
             if SeaIndex == 3 then _G.RipIndraBegun = false end
-            if Config.AutoSea3 then
+            if Config.AutoSea3 and _G.AutoFarm ~= false and not _G.Stop and not _G.SecretsHoldSea then
                 pcall(function()
                     -- [FIXED] Missing "SeaIndex ~= 3" — previously this loop
                     -- ran FOREVER even after arriving at Sea 3, continuing to call
@@ -6033,7 +6479,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                     CFrame.new(-1813.52, 14.86, 1724.80)
                                 }
                                 for _, pos in ipairs(positions) do
-                                    if not Config.AutoSea3 then break end
+                                    if not Config.AutoSea3 or _G.AutoFarm == false or _G.Stop then break end
                                     HumanoidRootPart.CFrame = pos
                                     task.wait(0.1)
                                 end
@@ -6217,7 +6663,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- MAIN LOOP
     -- ============================================================
     while task.wait() do
-        if Config.Configuration.HopWhenIdle and LastIdling and os.time() - LastIdling > 300.0 then
+        if Config.Configuration.HopWhenIdle and _G.AutoFarm ~= false and LastIdling and os.time() - LastIdling > 300.0 then
             SetTask('MainTask', "Rejoining due idle in 10 min!")
             task.wait(1)
             while task.wait() do game:GetService('TeleportService'):Teleport(game.PlaceId) end
@@ -6325,7 +6771,7 @@ task.spawn(function()
 
     task.spawn(function()
         while task.wait(Config.Extras.GachaInterval or 5) do
-            if getgenv().AutoRandomFruit and Config.Extras.AutoGachaFruit then
+            if getgenv().AutoRandomFruit and Config.Extras.AutoGachaFruit and _G.AutoFarm ~= false and not _G.Stop then
                 local ok, result = GachaCall("Check")
                 if ok and typeof(result) == "table" and result.RequirementsMet then
                     local ok2, r2 = GachaCall("Purchase")
@@ -6335,12 +6781,13 @@ task.spawn(function()
         end
     end)
 
-    getgenv().HexHubOficial = {
+    getgenv().VenaVaultOficial = {
         Start = function() getgenv().AutoRandomFruit = true; Config.Extras.AutoGachaFruit = true end,
         Stop  = function() getgenv().AutoRandomFruit = false; Config.Extras.AutoGachaFruit = false end,
         Spin  = function() return GachaCall("Purchase") end,
         Check = function() return GachaCall("Check") end,
     }
+    getgenv().HexHubOficial = getgenv().VenaVaultOficial -- old name kept for compatibility
 end)
 
 --============================================================
@@ -6662,7 +7109,7 @@ local lastMelee = 0
 
 task.spawn(function()
     while task.wait(CFG.LoopDelay) do
-        if not CFG.Enabled then continue end
+        if not CFG.Enabled or _G.AutoFarm == false or _G.Stop then continue end
 
         local char = LocalPlayer.Character
         if not char or not isAlive(char) then continue end
@@ -6695,7 +7142,7 @@ end)
 
 task.spawn(function()
     while task.wait(CFG.ParalyzeTick) do
-        if not CFG.Enabled or not CFG.Paralyze then continue end
+        if not CFG.Enabled or not CFG.Paralyze or _G.AutoFarm == false or _G.Stop then continue end
 
         local char = LocalPlayer.Character
         if not char then continue end
@@ -6724,7 +7171,7 @@ getgenv().VOidAttack = CFG
 end
 
 --============================================================
--- HEX HUB UI (extracted)
+-- HEX HUB UI (Vena-style glassmorphism)
 --============================================================
 task.spawn(function()
     local Players = game:GetService("Players")
@@ -6740,7 +7187,7 @@ task.spawn(function()
     end)
 
     for _, container in ipairs({CoreGui, PlayerGui}) do
-        for _, name in ipairs({"Noguchi Status", "Noguchi Ui", "Noguchi Toggle", "Hex Hub Ui", "Hex Hub Toggle"}) do
+        for _, name in ipairs({"Noguchi Status", "Noguchi Ui", "Noguchi Toggle", "Hex Hub Ui", "Hex Hub Toggle", "Vena's Vault", "Vena's Vault Toggle"}) do
             pcall(function()
                 local old = container:FindFirstChild(name)
                 if old then old:Destroy() end
@@ -6750,7 +7197,7 @@ task.spawn(function()
 
     local UI = {}
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "Hex Hub Ui"
+    ScreenGui.Name = "Vena's Vault"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.DisplayOrder = 50
     ScreenGui.IgnoreGuiInset = true
@@ -6758,110 +7205,215 @@ task.spawn(function()
 
     local PURPLE = Color3.fromRGB(168, 85, 247)
     local PINK = Color3.fromRGB(240, 130, 220)
-    local CARD = Color3.fromRGB(38, 20, 60)
+    local LAV = Color3.fromRGB(216, 190, 240)
+    local DIM = Color3.fromRGB(190, 160, 210)
+    local CARD = Color3.fromRGB(34, 16, 54)
     local INK = Color3.new(1, 1, 1)
 
     local function corner(obj, r)
-        local c = Instance.new("UICorner", obj)
+        local c = Instance.new("UICorner")
         c.CornerRadius = UDim.new(0, r or 12)
+        c.Parent = obj
         return c
     end
     local function stroke(obj, color, thick, transp)
-        local s = Instance.new("UIStroke", obj)
+        local s = Instance.new("UIStroke")
         s.Color = color or PURPLE
         s.Thickness = thick or 1.5
         s.Transparency = transp == nil and 0.25 or transp
+        s.Parent = obj
         return s
     end
-    local function grad(obj, c1, c2)
-        local g = Instance.new("UIGradient", obj)
+    local function grad(obj, c1, c2, rot)
+        local g = Instance.new("UIGradient")
         g.Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, c1),
             ColorSequenceKeypoint.new(1, c2),
         })
+        if rot then g.Rotation = rot end
+        g.Parent = obj
         return g
     end
-    local function label(parent, text, size, pos, px, align)
-        local l = Instance.new("TextLabel", parent)
+    local function label(parent, text, size, pos, px, align, font)
+        local l = Instance.new("TextLabel")
         l.BackgroundTransparency = 1
         l.Text = text
         l.TextColor3 = INK
-        l.Font = Enum.Font.GothamBold
+        l.Font = font or Enum.Font.GothamBold
         l.TextSize = px or 15
         l.TextXAlignment = align or Enum.TextXAlignment.Left
+        l.TextTruncate = Enum.TextTruncate.AtEnd
         l.Size = size
         l.Position = pos
+        l.Parent = parent
         return l
     end
+    -- small glowing diamond sparkle (pure shapes, no font glyphs)
+    local function sparkle(parent, x, y, s, color, transp)
+        local d = Instance.new("Frame")
+        d.AnchorPoint = Vector2.new(0.5, 0.5)
+        d.Size = UDim2.new(0, s, 0, s)
+        d.Position = UDim2.new(0, x, 0, y)
+        d.Rotation = 45
+        d.BackgroundColor3 = color or PINK
+        d.BackgroundTransparency = transp == nil and 0.15 or transp
+        d.BorderSizePixel = 0
+        d.Parent = parent
+        corner(d, 1)
+        return d
+    end
+    -- shape butterfly: 4 oval wings + body (always renders, no emoji needed)
+    local function butterfly(parent, cx, cy, size, transp)
+        local root = Instance.new("Frame")
+        root.AnchorPoint = Vector2.new(0.5, 0.5)
+        root.Size = UDim2.new(0, size, 0, size * 0.8)
+        root.Position = UDim2.new(0, cx, 0, cy)
+        root.BackgroundTransparency = 1
+        root.BorderSizePixel = 0
+        root.Parent = parent
+        local function wing(w, h, px, py, rot)
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(0, w, 0, h)
+            f.Position = UDim2.new(0, px, 0, py)
+            f.Rotation = rot
+            f.BackgroundColor3 = PURPLE
+            f.BackgroundTransparency = transp or 0.25
+            f.BorderSizePixel = 0
+            f.Parent = root
+            corner(f, math.floor(math.min(w, h) / 2))
+            grad(f, PURPLE, PINK)
+            return f
+        end
+        local uw, uh = size * 0.30, size * 0.44
+        local lw, lh = size * 0.22, size * 0.30
+        wing(uw, uh, size * 0.5 - uw - 2, 0, -18)              -- upper left
+        wing(uw, uh, size * 0.5 + 2, 0, 18)                    -- upper right
+        wing(lw, lh, size * 0.5 - lw - 1, uh - 2, -12)         -- lower left
+        wing(lw, lh, size * 0.5 + 1, uh - 2, 12)               -- lower right
+        local body = Instance.new("Frame")                    -- body
+        body.Size = UDim2.new(0, math.max(3, size * 0.045), 0, size * 0.62)
+        body.Position = UDim2.new(0.5, -1, 0, size * 0.06)
+        body.BackgroundColor3 = PINK
+        body.BackgroundTransparency = transp or 0.25
+        body.BorderSizePixel = 0
+        body.Parent = root
+        corner(body, 3)
+        return root
+    end
+    -- little 5-petal flower (pure shapes)
+    local function flower(parent, cx, cy, r, color, transp)
+        local root = Instance.new("Frame")
+        root.AnchorPoint = Vector2.new(0.5, 0.5)
+        root.Size = UDim2.new(0, r * 4, 0, r * 4)
+        root.Position = UDim2.new(0, cx, 0, cy)
+        root.BackgroundTransparency = 1
+        root.BorderSizePixel = 0
+        root.Parent = parent
+        for i = 0, 4 do
+            local a = math.rad(i * 72)
+            local p = Instance.new("Frame")
+            p.AnchorPoint = Vector2.new(0.5, 0.5)
+            p.Size = UDim2.new(0, r * 1.5, 0, r * 1.5)
+            p.Position = UDim2.new(0.5, math.cos(a) * r, 0.5, math.sin(a) * r)
+            p.BackgroundColor3 = color or PINK
+            p.BackgroundTransparency = transp == nil and 0.35 or transp
+            p.BorderSizePixel = 0
+            p.Parent = root
+            corner(p, math.floor(r * 0.75))
+        end
+        local c = Instance.new("Frame")
+        c.AnchorPoint = Vector2.new(0.5, 0.5)
+        c.Size = UDim2.new(0, r, 0, r)
+        c.Position = UDim2.new(0.5, 0, 0.5, 0)
+        c.BackgroundColor3 = Color3.new(1, 1, 1)
+        c.BackgroundTransparency = 0.3
+        c.BorderSizePixel = 0
+        c.Parent = root
+        corner(c, math.floor(r / 2))
+        return root
+    end
+
+    -- soft outer glow behind window
+    local Glow = Instance.new("Frame", ScreenGui)
+    Glow.AnchorPoint = Vector2.new(0.5, 0.5)
+    Glow.Size = UDim2.new(0, 652, 0, 412)
+    Glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Glow.BackgroundColor3 = PURPLE
+    Glow.BackgroundTransparency = 0.88
+    Glow.BorderSizePixel = 0
+    corner(Glow, 24)
 
     -- Main window
     local Frame = Instance.new("Frame", ScreenGui)
     Frame.AnchorPoint = Vector2.new(0.5, 0.5)
-    Frame.Size = UDim2.new(0, 620, 0, 380)
+    Frame.Size = UDim2.new(0, 640, 0, 400)
     Frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    Frame.BackgroundColor3 = Color3.fromRGB(24, 12, 38)
-    Frame.BackgroundTransparency = 0.12
+    Frame.BackgroundColor3 = Color3.fromRGB(22, 10, 36)
+    Frame.BackgroundTransparency = 0.06
     Frame.BorderSizePixel = 0
     Frame.Active = true
     Frame.Draggable = true
     Frame.Visible = true
-    corner(Frame, 18)
-    local frameStroke = stroke(Frame, PURPLE, 2, 0.15)
-    local frameGrad = grad(frameStroke, PURPLE, PINK)
+    corner(Frame, 20)
+    local frameStroke = stroke(Frame, PURPLE, 2, 0.1)
+    grad(frameStroke, PURPLE, PINK)
 
-    -- Glass shine stripe
-    local shine = Instance.new("Frame", Frame)
-    shine.AnchorPoint = Vector2.new(0.5, 0)
-    shine.Size = UDim2.new(1.2, 0, 0, 60)
-    shine.Position = UDim2.new(0.5, 0, 0, 18)
-    shine.Rotation = -8
-    shine.BackgroundColor3 = Color3.new(1, 1, 1)
-    shine.BackgroundTransparency = 0.94
-    shine.BorderSizePixel = 0
+    -- top + bottom light swirls (thin glowing streaks)
+    local swirlTop = Instance.new("Frame", Frame)
+    swirlTop.AnchorPoint = Vector2.new(0.5, 0)
+    swirlTop.Size = UDim2.new(0, 520, 0, 3)
+    swirlTop.Position = UDim2.new(0.5, 0, 0, 6)
+    swirlTop.Rotation = -4
+    swirlTop.BackgroundColor3 = PINK
+    swirlTop.BackgroundTransparency = 0.35
+    swirlTop.BorderSizePixel = 0
+    corner(swirlTop, 2)
+    local swirlBot = Instance.new("Frame", Frame)
+    swirlBot.AnchorPoint = Vector2.new(0.5, 1)
+    swirlBot.Size = UDim2.new(0, 560, 0, 3)
+    swirlBot.Position = UDim2.new(0.5, 0, 1, -6)
+    swirlBot.Rotation = 3
+    swirlBot.BackgroundColor3 = PURPLE
+    swirlBot.BackgroundTransparency = 0.3
+    swirlBot.BorderSizePixel = 0
+    corner(swirlBot, 2)
 
-    -- Corner glow dots
-    for _, p in ipairs({Vector2.new(0, 14), Vector2.new(1, -14)}) do
-        local dot = Instance.new("Frame", Frame)
-        dot.AnchorPoint = Vector2.new(0.5, 0.5)
-        dot.Size = UDim2.new(0, 10, 0, 10)
-        dot.Position = UDim2.new(p.X, p.Y, 0, 14)
-        dot.BackgroundColor3 = PINK
-        dot.BackgroundTransparency = 0.25
-        dot.BorderSizePixel = 0
-        corner(dot, 5)
-    end
-
-    -- Title + subtitle
-    local title = label(Frame, "Hex Hub", UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 8), 30, Enum.TextXAlignment.Center)
-    title.Font = Enum.Font.Fantasy
+    -- Title zone
+    butterfly(Frame, 150, 30, 52, 0.3)
+    local title = label(Frame, "Vena's Vault", UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 6), 32, Enum.TextXAlignment.Center, Enum.Font.Garamond)
     local titleGrad = grad(title, PURPLE, PINK)
-    label(Frame, "https://discord.gg/KrEPeAtjn", UDim2.new(1, 0, 0, 18), UDim2.new(0, 0, 0, 42), 13, Enum.TextXAlignment.Center).TextColor3 = PINK
+    label(Frame, "https://discord.gg/KrEPeAtjn", UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 40), 12, Enum.TextXAlignment.Center, Enum.Font.Gotham).TextColor3 = PINK
+    sparkle(Frame, 96, 22, 10, PINK, 0.1)
+    sparkle(Frame, 548, 26, 8, INK, 0.2)
+    sparkle(Frame, 596, 66, 7, PINK, 0.25)
+    sparkle(Frame, 40, 70, 7, INK, 0.3)
 
-    -- Close button
+    -- Close button (glowing ring)
     local closeBtn = Instance.new("TextButton", Frame)
-    closeBtn.Size = UDim2.new(0, 26, 0, 26)
-    closeBtn.Position = UDim2.new(1, -34, 0, 8)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 60)
-    closeBtn.BackgroundTransparency = 0.2
+    closeBtn.Size = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position = UDim2.new(1, -36, 0, 8)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(50, 18, 62)
+    closeBtn.BackgroundTransparency = 0.1
     closeBtn.Text = "X"
     closeBtn.TextColor3 = INK
     closeBtn.Font = Enum.Font.GothamBold
     closeBtn.TextSize = 14
     closeBtn.BorderSizePixel = 0
-    corner(closeBtn, 13)
-    stroke(closeBtn, PURPLE, 1.5, 0.3)
+    corner(closeBtn, 14)
+    stroke(closeBtn, PINK, 1.5, 0.2)
     closeBtn.MouseButton1Click:Connect(function() Frame.Visible = false end)
 
-    -- Tabs
+    -- Tabs (centered pills)
     local tabBar = Instance.new("Frame", Frame)
-    tabBar.Size = UDim2.new(0, 440, 0, 34)
-    tabBar.Position = UDim2.new(1, -452, 0, 64)
+    tabBar.Size = UDim2.new(0, 472, 0, 34)
+    tabBar.Position = UDim2.new(0.5, -236, 0, 60)
     tabBar.BackgroundTransparency = 1
     tabBar.BorderSizePixel = 0
     local tabLayout = Instance.new("UIListLayout", tabBar)
     tabLayout.FillDirection = Enum.FillDirection.Horizontal
     tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
     tabLayout.Padding = UDim.new(0, 8)
+    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
     local pages = {}
     local tabBtns = {}
@@ -6876,7 +7428,7 @@ task.spawn(function()
     for i, name in ipairs({"Main", "Combat", "Stats", "Settings"}) do
         local b = Instance.new("TextButton", tabBar)
         b.LayoutOrder = i
-        b.Size = UDim2.new(0, 102, 0, 32)
+        b.Size = UDim2.new(0, 110, 0, 32)
         b.BackgroundColor3 = Color3.fromRGB(45, 25, 70)
         b.BackgroundTransparency = 0.35
         b.Text = name
@@ -6885,36 +7437,36 @@ task.spawn(function()
         b.TextSize = 14
         b.BorderSizePixel = 0
         corner(b, 16)
-        stroke(b, PURPLE, 1.2, 0.45)
+        stroke(b, PURPLE, 1.2, 0.4)
         tabBtns[name] = b
         b.MouseButton1Click:Connect(function() selectTab(name) end)
     end
 
     -- Left profile panel
     local profile = Instance.new("Frame", Frame)
-    profile.Size = UDim2.new(0, 152, 0, 296)
-    profile.Position = UDim2.new(0, 12, 0, 72)
+    profile.Size = UDim2.new(0, 160, 0, 292)
+    profile.Position = UDim2.new(0, 12, 0, 100)
     profile.BackgroundColor3 = CARD
-    profile.BackgroundTransparency = 0.25
+    profile.BackgroundTransparency = 0.2
     profile.BorderSizePixel = 0
     corner(profile, 14)
-    stroke(profile, PURPLE, 1.2, 0.4)
+    stroke(profile, PURPLE, 1.2, 0.35)
 
     local avatar = Instance.new("Frame", profile)
     avatar.AnchorPoint = Vector2.new(0.5, 0)
-    avatar.Size = UDim2.new(0, 84, 0, 84)
-    avatar.Position = UDim2.new(0.5, 0, 0, 14)
+    avatar.Size = UDim2.new(0, 88, 0, 88)
+    avatar.Position = UDim2.new(0.5, 0, 0, 12)
     avatar.BackgroundColor3 = Color3.fromRGB(55, 28, 85)
-    avatar.BackgroundTransparency = 0.2
+    avatar.BackgroundTransparency = 0.15
     avatar.BorderSizePixel = 0
-    corner(avatar, 42)
+    corner(avatar, 44)
     stroke(avatar, PINK, 2, 0.1)
-    label(avatar, "HEX", UDim2.new(1, 0, 1, 0), UDim2.new(0, 0, 0, 0), 22, Enum.TextXAlignment.Center).Font = Enum.Font.Fantasy
+    butterfly(avatar, 44, 42, 56, 0.15)
 
-    UI.Level = label(profile, "Level: 0", UDim2.new(1, -16, 0, 22), UDim2.new(0, 8, 0, 104), 16, Enum.TextXAlignment.Center)
+    UI.Level = label(profile, "Level: 0", UDim2.new(1, -16, 0, 22), UDim2.new(0, 8, 0, 106), 17, Enum.TextXAlignment.Center)
     local barBg = Instance.new("Frame", profile)
     barBg.Size = UDim2.new(1, -20, 0, 13)
-    barBg.Position = UDim2.new(0, 10, 0, 130)
+    barBg.Position = UDim2.new(0, 10, 0, 132)
     barBg.BackgroundColor3 = Color3.fromRGB(20, 10, 32)
     barBg.BackgroundTransparency = 0.2
     barBg.BorderSizePixel = 0
@@ -6925,16 +7477,26 @@ task.spawn(function()
     barFill.BorderSizePixel = 0
     corner(barFill, 7)
     grad(barFill, PURPLE, PINK)
-    UI._pct = label(profile, "0%", UDim2.new(1, -16, 0, 16), UDim2.new(0, 8, 0, 145), 12, Enum.TextXAlignment.Center)
-    UI._pct.TextColor3 = Color3.fromRGB(200, 170, 230)
-    UI.Race = label(profile, "Race: ?", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 170), 14)
-    UI.Beli = label(profile, "Beli: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 194), 14)
-    UI.Frag = label(profile, "Frag: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 218), 14)
+    UI._pct = label(profile, "0%", UDim2.new(1, -16, 0, 16), UDim2.new(0, 8, 0, 147), 12, Enum.TextXAlignment.Center)
+    UI._pct.TextColor3 = DIM
+    UI.Race = label(profile, "Race: ?", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 172), 14)
+    UI.Beli = label(profile, "Beli: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 196), 14)
+    UI.Frag = label(profile, "Frag: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 220), 14)
+    label(profile, "Auto Farm OFF = fully paused", UDim2.new(1, -16, 0, 28), UDim2.new(0, 8, 0, 248), 11, Enum.TextXAlignment.Center).TextColor3 = DIM
+
+    -- decorative flowers bottom-left + sparkles
+    flower(Frame, 26, 376, 7, PINK, 0.35)
+    flower(Frame, 52, 386, 5, PURPLE, 0.3)
+    sparkle(Frame, 70, 360, 6, INK, 0.3)
+    -- big translucent butterfly bottom-right (Vena vibe)
+    butterfly(Frame, 606, 366, 96, 0.62)
+    sparkle(Frame, 560, 330, 8, PINK, 0.25)
+    sparkle(Frame, 622, 316, 6, INK, 0.3)
 
     -- Right pages container
     local pageHost = Instance.new("Frame", Frame)
-    pageHost.Size = UDim2.new(0, 440, 0, 262)
-    pageHost.Position = UDim2.new(1, -452, 0, 106)
+    pageHost.Size = UDim2.new(0, 444, 0, 280)
+    pageHost.Position = UDim2.new(0, 184, 0, 100)
     pageHost.BackgroundTransparency = 1
     pageHost.BorderSizePixel = 0
     local function newPage(name)
@@ -6951,14 +7513,16 @@ task.spawn(function()
         c.Size = UDim2.new(1, 0, 0, h)
         c.Position = UDim2.new(0, 0, 0, y)
         c.BackgroundColor3 = CARD
-        c.BackgroundTransparency = 0.25
+        c.BackgroundTransparency = 0.2
         c.BorderSizePixel = 0
         corner(c, 12)
-        stroke(c, PURPLE, 1.2, 0.45)
+        stroke(c, PURPLE, 1.2, 0.4)
         return c
     end
     local function cardTitle(parent, text)
-        return label(parent, text, UDim2.new(1, -16, 0, 22), UDim2.new(0, 12, 0, 6), 15)
+        local t = label(parent, text, UDim2.new(1, -16, 0, 22), UDim2.new(0, 28, 0, 6), 15)
+        sparkle(parent, 16, 17, 8, PINK, 0.15)
+        return t
     end
 
     -- Toggle switch component
@@ -6967,19 +7531,20 @@ task.spawn(function()
         row.Size = size
         row.Position = pos
         row.BackgroundColor3 = Color3.fromRGB(48, 26, 72)
-        row.BackgroundTransparency = 0.15
+        row.BackgroundTransparency = 0.1
         row.Text = ""
         row.AutoButtonColor = false
         row.BorderSizePixel = 0
-        corner(row, 12)
-        stroke(row, PURPLE, 1, 0.5)
-        label(row, text, UDim2.new(1, -64, 1, 0), UDim2.new(0, 12, 0, 0), 13)
+        corner(row, 14)
+        stroke(row, PURPLE, 1, 0.45)
+        label(row, text, UDim2.new(1, -66, 1, 0), UDim2.new(0, 14, 0, 0), 13)
         local pill = Instance.new("Frame", row)
         pill.AnchorPoint = Vector2.new(1, 0.5)
-        pill.Size = UDim2.new(0, 44, 0, 22)
-        pill.Position = UDim2.new(1, -8, 0.5, 0)
+        pill.Size = UDim2.new(0, 46, 0, 24)
+        pill.Position = UDim2.new(1, -10, 0.5, 0)
         pill.BorderSizePixel = 0
-        corner(pill, 11)
+        corner(pill, 12)
+        stroke(pill, PURPLE, 1, 0.5)
         local knob = Instance.new("Frame", pill)
         knob.AnchorPoint = Vector2.new(0, 0.5)
         knob.Size = UDim2.new(0, 18, 0, 18)
@@ -6990,12 +7555,13 @@ task.spawn(function()
         local function redraw()
             pill.BackgroundColor3 = state.on and PURPLE or Color3.fromRGB(70, 50, 95)
             pill.BackgroundTransparency = state.on and 0 or 0.3
-            knob.Position = state.on and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+            knob.Position = state.on and UDim2.new(1, -21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
         end
         redraw()
         row.MouseButton1Click:Connect(function()
             state.on = not state.on
             redraw()
+            row:SetAttribute("On", state.on)
             pcall(callback, state.on)
         end)
         row:SetAttribute("On", initial)
@@ -7006,26 +7572,26 @@ task.spawn(function()
     -- ============ MAIN PAGE ============
     local mainPg = newPage("Main")
     do
-        local farmCard = card(mainPg, 0, 96)
+        local farmCard = card(mainPg, 0, 100)
         cardTitle(farmCard, "Auto Farm")
         -- mode dropdown (cycles weapon mode)
         local MODES = {"Melee", "Sword", "Gun", "Blox Fruit"}
         local modeBtn = Instance.new("TextButton", farmCard)
-        modeBtn.Size = UDim2.new(0, 210, 0, 34)
+        modeBtn.Size = UDim2.new(0, 208, 0, 36)
         modeBtn.Position = UDim2.new(0, 12, 0, 34)
         modeBtn.BackgroundColor3 = Color3.fromRGB(30, 15, 48)
-        modeBtn.BackgroundTransparency = 0.15
+        modeBtn.BackgroundTransparency = 0.1
         modeBtn.TextColor3 = INK
         modeBtn.Font = Enum.Font.GothamBold
-        modeBtn.TextSize = 14
+        modeBtn.TextSize = 13
         modeBtn.BorderSizePixel = 0
-        corner(modeBtn, 17)
-        stroke(modeBtn, PURPLE, 1.2, 0.4)
+        corner(modeBtn, 18)
+        stroke(modeBtn, PURPLE, 1.2, 0.35)
         UI._modeBtn = modeBtn
         local pills = {}
         local function setMode(m)
             _G.ChooseWP = m
-            modeBtn.Text = "  Select Mode      " .. m .. "   v"
+            modeBtn.Text = "Select Mode    " .. m .. "   v"
             for _, p in ipairs(modePills) do
                 local on = (p.mode == m)
                 p.btn.BackgroundColor3 = on and PURPLE or Color3.fromRGB(45, 25, 70)
@@ -7045,27 +7611,42 @@ task.spawn(function()
             setMode(MODES[1])
         end)
         _G.ChooseWP = cur
-        -- big farm toggle
-        UI._farmToggle = makeToggle(farmCard, "Auto Farm", UDim2.new(0, 232, 0, 34), UDim2.new(0, 196, 0, 34), _G.AutoFarm ~= false, function(on)
-            _G.AutoFarm = on
-        end)
+        -- MASTER farm toggle: OFF stops everything (movement, attacks, quests)
         if _G.AutoFarm == nil then _G.AutoFarm = true end
+        UI._farmToggle = makeToggle(farmCard, "Auto Farm", UDim2.new(0, 228, 0, 34), UDim2.new(0, 204, 0, 36), _G.AutoFarm ~= false, function(on)
+            _G.AutoFarm = on
+            if not on then
+                -- FULL STOP: cancel tweens in flight + drop all farm flags
+                pcall(function() if TweenInstance then TweenInstance:Cancel() end end)
+                pcall(function() if TweenInstance2 then TweenInstance2:Cancel() end end)
+                pcall(function() if _G._FarmTween then _G._FarmTween:Cancel() end end)
+                pcall(function() if _G._FarmTween2 then _G._FarmTween2:Cancel() end end)
+                shouldTween = false
+                getgenv().OnFarm = false
+                getgenv().BringMonster = false
+                MonResult = nil
+                _G.PanicModeActive = false
+                pcall(function() SetTask("SubTask", "Paused — Auto Farm OFF") end)
+            else
+                pcall(function() SetTask("SubTask", "Idle") end)
+            end
+        end)
         setMode(cur)
 
-        local hotCard = card(mainPg, 104, 158)
+        local hotCard = card(mainPg, 108, 172)
         cardTitle(hotCard, "Hotkeys / Toggles")
-        makeToggle(hotCard, "Auto Haki", UDim2.new(0, 12, 0, 34), UDim2.new(0, 200, 0, 52), Config.AutoKen ~= false, function(on)
+        makeToggle(hotCard, "Auto Haki", UDim2.new(0, 12, 0, 34), UDim2.new(0, 204, 0, 54), Config.AutoKen ~= false, function(on)
             Config.AutoKen = on
         end)
-        makeToggle(hotCard, "Auto Boss", UDim2.new(0, 224, 0, 34), UDim2.new(0, 200, 0, 52), _G.AutoBoss ~= false, function(on)
+        makeToggle(hotCard, "Auto Boss", UDim2.new(0, 228, 0, 34), UDim2.new(0, 204, 0, 54), _G.AutoBoss ~= false, function(on)
             _G.AutoBoss = on
         end)
         if _G.AutoBoss == nil then _G.AutoBoss = true end
-        makeToggle(hotCard, "Auto Quest", UDim2.new(0, 12, 0, 94), UDim2.new(0, 200, 0, 52), _G.AutoQuest ~= false, function(on)
+        makeToggle(hotCard, "Auto Quest", UDim2.new(0, 12, 0, 96), UDim2.new(0, 204, 0, 54), _G.AutoQuest ~= false, function(on)
             _G.AutoQuest = on
         end)
         if _G.AutoQuest == nil then _G.AutoQuest = true end
-        makeToggle(hotCard, "Auto Collect", UDim2.new(0, 224, 0, 94), UDim2.new(0, 200, 0, 52), _G.AutoCollect ~= false, function(on)
+        makeToggle(hotCard, "Auto Collect", UDim2.new(0, 228, 0, 96), UDim2.new(0, 204, 0, 54), _G.AutoCollect ~= false, function(on)
             _G.AutoCollect = on
         end)
         if _G.AutoCollect == nil then _G.AutoCollect = true end
@@ -7075,31 +7656,32 @@ task.spawn(function()
     -- ============ COMBAT PAGE ============
     do
         local combatPg = newPage("Combat")
-        local modeCard = card(combatPg, 0, 122)
+        local modeCard = card(combatPg, 0, 126)
         cardTitle(modeCard, "Combat Style")
         local pills = modePills
         for i, m in ipairs({"Melee", "Sword", "Gun", "Blox Fruit"}) do
             local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
             local b = Instance.new("TextButton", modeCard)
-            b.Size = UDim2.new(0, 202, 0, 34)
-            b.Position = UDim2.new(0, 12 + col * 214, 0, 34 + row * 42)
+            b.Size = UDim2.new(0, 204, 0, 36)
+            b.Position = UDim2.new(0, 12 + col * 216, 0, 34 + row * 44)
             b.Text = m
             b.TextColor3 = INK
             b.Font = Enum.Font.GothamBold
             b.TextSize = 14
             b.BorderSizePixel = 0
-            corner(b, 17)
-            stroke(b, PURPLE, 1.2, 0.4)
+            corner(b, 18)
+            stroke(b, PURPLE, 1.2, 0.35)
             local entry = { mode = m, btn = b }
             table.insert(pills, entry)
             b.MouseButton1Click:Connect(function() UI._setMode(m) end)
         end
         UI._setMode(_G.ChooseWP or "Melee")
-        local statusCard = card(combatPg, 130, 132)
+        local statusCard = card(combatPg, 134, 146)
         cardTitle(statusCard, "Status")
         UI._weapon = label(statusCard, "Weapon: -", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 34), 14)
         UI._panic = label(statusCard, "State: Calm", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 60), 14)
-        label(statusCard, "Panic Mode auto-hides at low HP.", UDim2.new(1, -24, 0, 40), UDim2.new(0, 12, 0, 86), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+        label(statusCard, "OFF on Auto Farm pauses all movement,", UDim2.new(1, -24, 0, 18), UDim2.new(0, 12, 0, 90), 12).TextColor3 = DIM
+        label(statusCard, "attacks, quests, bosses and collecting.", UDim2.new(1, -24, 0, 18), UDim2.new(0, 12, 0, 110), 12).TextColor3 = DIM
     end
 
     -- ============ STATS PAGE ============
@@ -7107,13 +7689,13 @@ task.spawn(function()
         local statsPg = newPage("Stats")
         local itemsCard = card(statsPg, 0, 118)
         cardTitle(itemsCard, "Account Items")
-        UI.GodHuman = label(itemsCard, "🔴 GodHuman", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 32), 14)
-        UI.CDK = label(itemsCard, "🔴 Cursed Dual Katana", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 32), 14)
-        UI.SkullGuitar = label(itemsCard, "🔴 Skull Guitar", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 58), 14)
-        UI.MirrorFractal = label(itemsCard, "🔴 Mirror Fractal", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 58), 14)
-        UI.Valkyrie = label(itemsCard, "🔴 Valkyrie Helm", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 84), 14)
-        UI.PullLever = label(itemsCard, "🔴 Pull Lever", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 84), 14)
-        local invCard = card(statsPg, 126, 136)
+        UI.GodHuman = label(itemsCard, "GodHuman", UDim2.new(0, 204, 0, 20), UDim2.new(0, 12, 0, 32), 14)
+        UI.CDK = label(itemsCard, "Cursed Dual Katana", UDim2.new(0, 204, 0, 20), UDim2.new(0, 228, 0, 32), 14)
+        UI.SkullGuitar = label(itemsCard, "Skull Guitar", UDim2.new(0, 204, 0, 20), UDim2.new(0, 12, 0, 58), 14)
+        UI.MirrorFractal = label(itemsCard, "Mirror Fractal", UDim2.new(0, 204, 0, 20), UDim2.new(0, 228, 0, 58), 14)
+        UI.Valkyrie = label(itemsCard, "Valkyrie Helm", UDim2.new(0, 204, 0, 20), UDim2.new(0, 12, 0, 84), 14)
+        UI.PullLever = label(itemsCard, "Pull Lever", UDim2.new(0, 204, 0, 20), UDim2.new(0, 228, 0, 84), 14)
+        local invCard = card(statsPg, 126, 154)
         cardTitle(invCard, "Inventory")
         local scroll = Instance.new("ScrollingFrame", invCard)
         scroll.Size = UDim2.new(1, -24, 1, -44)
@@ -7132,7 +7714,7 @@ task.spawn(function()
             l.Size = UDim2.new(1, 0, 0, 18)
             l.BackgroundTransparency = 1
             l.Text = text
-            l.TextColor3 = Color3.fromRGB(215, 190, 235)
+            l.TextColor3 = LAV
             l.Font = Enum.Font.Gotham
             l.TextSize = 13
             l.TextXAlignment = Enum.TextXAlignment.Left
@@ -7143,7 +7725,18 @@ task.spawn(function()
     -- ============ SETTINGS PAGE ============
     do
         local setPg = newPage("Settings")
-        local gfxCard = card(setPg, 0, 122)
+        local setScroll = Instance.new("ScrollingFrame", setPg)
+        setScroll.Size = UDim2.new(1, 0, 1, 0)
+        setScroll.BackgroundTransparency = 1
+        setScroll.BorderSizePixel = 0
+        setScroll.ScrollBarThickness = 4
+        setScroll.ScrollBarImageTransparency = 0.5
+        setScroll.CanvasSize = UDim2.new(0, 0, 0, 440)
+        local setBox = Instance.new("Frame", setScroll)
+        setBox.Size = UDim2.new(1, 0, 0, 440)
+        setBox.BackgroundTransparency = 1
+        setBox.BorderSizePixel = 0
+        local gfxCard = card(setBox, 0, 0)
         cardTitle(gfxCard, "Graphics")
         local function setBlackscreen(on)
             Config.Configuration.blackscreen = on
@@ -7154,13 +7747,21 @@ task.spawn(function()
                 if g then g.Enabled = on end
             end)
         end
-        UI._bsToggle = makeToggle(gfxCard, "Blackscreen", UDim2.new(0, 12, 0, 34), UDim2.new(0, 200, 0, 52), Config.Configuration and Config.Configuration.blackscreen or false, setBlackscreen)
-        label(gfxCard, "Hide the 3D world to save battery.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 92), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
-        local infoCard = card(setPg, 130, 132)
+        UI._bsToggle = makeToggle(gfxCard, "Blackscreen", UDim2.new(0, 12, 0, 34), UDim2.new(0, 204, 0, 54), Config.Configuration and Config.Configuration.blackscreen or false, setBlackscreen)
+        label(gfxCard, "Hide the 3D world to save battery.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 94), 12).TextColor3 = DIM
+        local secCard = card(setBox, 0, 134)
+        cardTitle(secCard, "Island Secrets")
+        UI._secretsToggle = makeToggle(secCard, "Auto Secrets", UDim2.new(0, 12, 0, 34), UDim2.new(0, 204, 0, 54), Config.AutoIslandSecrets ~= false, function(on)
+            Config.AutoIslandSecrets = on
+        end)
+        if Config.AutoIslandSecrets == nil then Config.AutoIslandSecrets = true end
+        label(secCard, "Sea 1 Lv2800+. Events, kills,", UDim2.new(1, -24, 0, 18), UDim2.new(0, 12, 0, 94), 12).TextColor3 = DIM
+        label(secCard, "objects and prompts on auto.", UDim2.new(1, -24, 0, 18), UDim2.new(0, 12, 0, 112), 12).TextColor3 = DIM
+        local infoCard = card(setBox, 0, 292)
         cardTitle(infoCard, "About")
-        label(infoCard, "Hex Hub v2.6", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 34), 14)
-        label(infoCard, "Update 30 ready | Tween 180", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 60), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
-        label(infoCard, "Main window is draggable.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 86), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+        label(infoCard, "Vena's Vault v2.8", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 34), 14)
+        label(infoCard, "Update 30 ready | Tween 180", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 60), 12).TextColor3 = DIM
+        label(infoCard, "Main window is draggable.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 86), 12).TextColor3 = DIM
     end
 
     selectTab("Main")
@@ -7187,13 +7788,13 @@ task.spawn(function()
     UI.getGodHuman = function() return godhumanUnlocked end
 
     local ToggleBtn = Instance.new("TextButton")
-    ToggleBtn.Name = "Hex Hub Toggle"
+    ToggleBtn.Name = "Vena's Vault Toggle"
     ToggleBtn.Size = UDim2.new(0, 55, 0, 55)
     ToggleBtn.AnchorPoint = Vector2.new(0, 0.5)
     ToggleBtn.Position = UDim2.new(0, 15, 0.5, 0)
     ToggleBtn.BackgroundColor3 = Color3.fromRGB(45, 20, 70)
     ToggleBtn.BackgroundTransparency = 0.1
-    ToggleBtn.Text = "HEX"
+    ToggleBtn.Text = "VV"
     ToggleBtn.TextColor3 = INK
     ToggleBtn.Font = Enum.Font.GothamBlack
     ToggleBtn.TextSize = 15
@@ -7226,7 +7827,11 @@ task.spawn(function()
                 end
                 if UI._weapon then
                     UI._weapon.Text = "Weapon: " .. tostring(_G.SelectWeapon or "-")
-                    UI._panic.Text = _G.PanicModeActive and "State: PANIC (hiding)" or "State: Calm"
+                    if _G.AutoFarm == false or _G.Stop then
+                        UI._panic.Text = "State: Paused"
+                    else
+                        UI._panic.Text = _G.PanicModeActive and "State: PANIC (hiding)" or "State: Calm"
+                    end
                 end
                 if UI._modeBtn and _G.ChooseWP and not string.find(UI._modeBtn.Text, _G.ChooseWP, 1, true) then
                     UI._setMode(_G.ChooseWP)
@@ -7249,25 +7854,27 @@ task.spawn(function()
                         local itemName = item.Name or "?"
                         local labelObj = UI.addItemLabel(string.format("%s - %s", itemName, item.Count or item.Type or ""))
                         _inventoryLabels[labelObj] = true
-                        if itemName == "Cursed Dual Katana" then UI.CDK.Text = "🟢 Cursed Dual Katana"
-                        elseif itemName == "Skull Guitar" then UI.SkullGuitar.Text = "🟢 Skull Guitar"
-                        elseif itemName == "Mirror Fractal" then UI.MirrorFractal.Text = "🟢 Mirror Fractal"
-                        elseif itemName == "Valkyrie Helm" then UI.Valkyrie.Text = "🟢 Valkyrie Helm" end
+                        if itemName == "Cursed Dual Katana" then UI.CDK.Text = "Cursed Dual Katana [OWNED]"
+                        elseif itemName == "Skull Guitar" then UI.SkullGuitar.Text = "Skull Guitar [OWNED]"
+                        elseif itemName == "Mirror Fractal" then UI.MirrorFractal.Text = "Mirror Fractal [OWNED]"
+                        elseif itemName == "Valkyrie Helm" then UI.Valkyrie.Text = "Valkyrie Helm [OWNED]" end
                     end
                 end
-                UI.GodHuman.Text = UI.getGodHuman() and "🟢 GodHuman" or "🔴 GodHuman"
+                UI.GodHuman.Text = UI.getGodHuman() and "GodHuman [OWNED]" or "GodHuman"
                 local doorOpen = CommF:InvokeServer("CheckTempleDoor")
-                UI.PullLever.Text = doorOpen and "🟢 Pull Lever" or "🔴 Pull Lever"
+                UI.PullLever.Text = doorOpen and "Pull Lever [READY]" or "Pull Lever"
             end)
         end
     end)
 
     getgenv().HexUI = UI
+    getgenv().VenaVault = UI -- renamed hub, HexUI kept for compatibility
 end)
+
 
 --============================================================
 -- [IMPROVED v2.3] Run main loop AT THE END OF FILE (instead of line ~6148).
 -- All chunk-level systems above (EXTRAS/redeem/gacha, VOID ATTACK,
--- HexUI) are now registered before the main loop takes the main thread.
+-- Vena UI) is now registered before the main loop takes the main thread.
 --============================================================
 hoangtuveu()
