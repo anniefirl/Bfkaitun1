@@ -1631,7 +1631,15 @@ end
     -- ============================================================
     local J = {CurrentLevel = 2, DoubleQuest = true, CurrentQuests = {}, BlacklistedQuestIds = {BartiloQuest = 1, CitizenQuest = 1, Trainees = 1, MarineQuest = 1, ImpelQuest = 1}}
     local W = require(game.ReplicatedStorage.GuideModule).Data.NPCList
-    repeat task.wait() until game.Players.LocalPlayer.DataLoaded and ScriptStorage
+    local _dataWaitT = os.clock()
+    repeat task.wait() until (LocalPlayer.Data and LocalPlayer.Data:FindFirstChild("Level")) or os.clock() - _dataWaitT > 45
+    pcall(RefreshPlayerData)
+    task.spawn(function()
+        while not (ScriptStorage.PlayerData and ScriptStorage.PlayerData.Level) do
+            task.wait(5)
+            pcall(RefreshPlayerData)
+        end
+    end)
     J.Quests = require(game.ReplicatedStorage.Quests)
     function J.Set(W, a, h) W[a] = h end
     function J.RefreshQuest(W)
