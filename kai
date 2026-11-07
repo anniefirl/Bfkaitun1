@@ -3359,6 +3359,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
             SetTask("SubTask", "📋 " .. Q.NameMon .. " | Quest: " .. Q.Mon)
 
+            -- Auto Quest toggle: when off, skip quest take/claim and grind mobs only
+            if _G.AutoQuest ~= false then
             local activeQuestName = GetActiveQuestName()
             if activeQuestName ~= nil then
                 if activeQuestName ~= false then
@@ -3389,7 +3391,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     J.StartQuest(Q.Qname, Q.Qdata)
                     task.wait(0.3)
                 end
-            end
+            end -- end activeQuestName if
+            end -- Auto Quest toggle gate
             -- CombatController.Attack handles: find monster + tween + attack
             -- (replace bringMob + equipWeapon + FastAttack + CheckMonster)
             CombatController.Attack(Q.Mon)
@@ -3848,6 +3851,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
 
     FunctionsHandler.BossesTask:RegisterMethod("Refresh", function()
+        if _G.AutoBoss == false then return nil end
         local k
         for h, h in BossesOrder do
             -- [FIXED] Added Config.BossWeapons gate — previously no way
@@ -3897,6 +3901,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- SPECIAL BOSSES TASK
     -- ============================================================
     FunctionsHandler.SpecialBossesTask:RegisterMethod('Refresh', function()
+        if _G.AutoBoss == false then return nil end
         local k
         for h, X in SpecialBossesOrder do
             -- [FIXED] Same gate Config.BossWeapons as BossesTask
@@ -4016,6 +4021,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     local LIBRARY_KEY_CF = CFrame.new(6377.12549, 296.634735, -6843.76025)
 
     FunctionsHandler.SwordBossTask:RegisterMethod("Refresh", function()
+        if _G.AutoBoss == false then return nil end
         for _, sw in ipairs(SwordBossList) do
             -- [NEW] Continuously check inventory — skip if sword is already present
             -- (per boss man's request: "check inventory ... if exists, stop fighting")
@@ -4117,6 +4123,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
 
     FunctionsHandler.CakePrinceTask:RegisterMethod("Refresh", function()
+        if _G.AutoBoss == false then return nil end
         if SeaIndex ~= 3 then return nil end
         if (ScriptStorage.PlayerData.Level or 0) < 1500 then return nil end
         -- [FIXED] Gated by "is there any melee needing mastery train",
@@ -4622,6 +4629,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- COLLECT DROPS
     -- ============================================================
     FunctionsHandler.CollectDrops:RegisterMethod("Refresh", function()
+        if _G.AutoCollect == false then return nil end
         local k = {}
         for h in ScriptStorage.Backpack do k[FruitIdToName(h)] = h end
         for h, h in workspace:GetChildren() do
@@ -5747,7 +5755,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     SetTask("SubTask", "Idle")
     ParsingTimes = 0
     function RefreshTasksData()
-        if _G.Stop then return end
+        if _G.Stop or _G.AutoFarm == false then return end
         for W, W in TasksOrder do
             local h = FunctionsHandler[W]
             if not h.Initalized then
@@ -6732,7 +6740,7 @@ task.spawn(function()
     end)
 
     for _, container in ipairs({CoreGui, PlayerGui}) do
-        for _, name in ipairs({"Noguchi Status", "Noguchi Ui", "Noguchi Toggle"}) do
+        for _, name in ipairs({"Noguchi Status", "Noguchi Ui", "Noguchi Toggle", "Hex Hub Ui", "Hex Hub Toggle"}) do
             pcall(function()
                 local old = container:FindFirstChild(name)
                 if old then old:Destroy() end
@@ -6742,119 +6750,430 @@ task.spawn(function()
 
     local UI = {}
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "Noguchi Ui"
+    ScreenGui.Name = "Hex Hub Ui"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.DisplayOrder = 50
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.Parent = PlayerGui
 
+    local PURPLE = Color3.fromRGB(168, 85, 247)
+    local PINK = Color3.fromRGB(240, 130, 220)
+    local CARD = Color3.fromRGB(38, 20, 60)
+    local INK = Color3.new(1, 1, 1)
+
+    local function corner(obj, r)
+        local c = Instance.new("UICorner", obj)
+        c.CornerRadius = UDim.new(0, r or 12)
+        return c
+    end
+    local function stroke(obj, color, thick, transp)
+        local s = Instance.new("UIStroke", obj)
+        s.Color = color or PURPLE
+        s.Thickness = thick or 1.5
+        s.Transparency = transp == nil and 0.25 or transp
+        return s
+    end
+    local function grad(obj, c1, c2)
+        local g = Instance.new("UIGradient", obj)
+        g.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, c1),
+            ColorSequenceKeypoint.new(1, c2),
+        })
+        return g
+    end
+    local function label(parent, text, size, pos, px, align)
+        local l = Instance.new("TextLabel", parent)
+        l.BackgroundTransparency = 1
+        l.Text = text
+        l.TextColor3 = INK
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = px or 15
+        l.TextXAlignment = align or Enum.TextXAlignment.Left
+        l.Size = size
+        l.Position = pos
+        return l
+    end
+
+    -- Main window
     local Frame = Instance.new("Frame", ScreenGui)
     Frame.AnchorPoint = Vector2.new(0.5, 0.5)
-    Frame.Size = UDim2.new(0, 600, 0, 400)
+    Frame.Size = UDim2.new(0, 620, 0, 380)
     Frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    Frame.BackgroundTransparency = 1
+    Frame.BackgroundColor3 = Color3.fromRGB(24, 12, 38)
+    Frame.BackgroundTransparency = 0.12
     Frame.BorderSizePixel = 0
-    Frame.Active = false
+    Frame.Active = true
+    Frame.Draggable = true
     Frame.Visible = true
+    corner(Frame, 18)
+    local frameStroke = stroke(Frame, PURPLE, 2, 0.15)
+    local frameGrad = grad(frameStroke, PURPLE, PINK)
 
-    local Frame2 = Instance.new("Frame", Frame)
-    Frame2.AnchorPoint = Vector2.new(0.5, 0.5)
-    Frame2.Size = UDim2.new(1, -47, 1, -47)
-    Frame2.Position = UDim2.new(0.5, 0, 0.5, 0)
-    Frame2.BackgroundColor3 = Color3.new(0, 0, 0)
-    Frame2.BackgroundTransparency = 0.5
-    Frame2.BorderSizePixel = 0
-    Instance.new("UICorner", Frame2).CornerRadius = UDim.new(0, 5)
+    -- Glass shine stripe
+    local shine = Instance.new("Frame", Frame)
+    shine.AnchorPoint = Vector2.new(0.5, 0)
+    shine.Size = UDim2.new(1.2, 0, 0, 60)
+    shine.Position = UDim2.new(0.5, 0, 0, 18)
+    shine.Rotation = -8
+    shine.BackgroundColor3 = Color3.new(1, 1, 1)
+    shine.BackgroundTransparency = 0.94
+    shine.BorderSizePixel = 0
 
-    local UIStroke = Instance.new("UIStroke", Frame2)
-    UIStroke.Color = Color3.new(255, 255, 255)
-    UIStroke.Thickness = 4
-
-    local UIGradient = Instance.new("UIGradient", UIStroke)
-    UIGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(204, 52, 235)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(97, 0, 117))
-    })
-
-    local function makeLabel(text, pos, size)
-        local lbl = Instance.new("TextLabel", Frame2)
-        lbl.Size = size or UDim2.new(0, 200, 0, 18)
-        lbl.Position = pos
-        lbl.BackgroundTransparency = 1
-        lbl.Text = text
-        lbl.TextColor3 = Color3.new(1, 1, 1)
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextSize = 16
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.ZIndex = 2
-        return lbl
+    -- Corner glow dots
+    for _, p in ipairs({Vector2.new(0, 14), Vector2.new(1, -14)}) do
+        local dot = Instance.new("Frame", Frame)
+        dot.AnchorPoint = Vector2.new(0.5, 0.5)
+        dot.Size = UDim2.new(0, 10, 0, 10)
+        dot.Position = UDim2.new(p.X, p.Y, 0, 14)
+        dot.BackgroundColor3 = PINK
+        dot.BackgroundTransparency = 0.25
+        dot.BorderSizePixel = 0
+        corner(dot, 5)
     end
 
-    local TextLabel = makeLabel("Hex Hub", UDim2.new(0.4, 0, 0.05, 0))
-    local UIGradient2 = Instance.new("UIGradient", TextLabel)
-    UIGradient2.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(204, 52, 235)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(97, 0, 117))
-    })
+    -- Title + subtitle
+    local title = label(Frame, "Hex Hub", UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 8), 30, Enum.TextXAlignment.Center)
+    title.Font = Enum.Font.Fantasy
+    local titleGrad = grad(title, PURPLE, PINK)
+    label(Frame, "https://discord.gg/KrEPeAtjn", UDim2.new(1, 0, 0, 18), UDim2.new(0, 0, 0, 42), 13, Enum.TextXAlignment.Center).TextColor3 = PINK
 
-    local TextLabel2 = makeLabel(" Account Stats ", UDim2.new(0.2, 0, 0.25, 0), UDim2.new(0, 150, 0, 18))
-    TextLabel2.TextSize = 18
-    local UIGradient3 = Instance.new("UIGradient", TextLabel2)
-    UIGradient3.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(204, 52, 235)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(97, 0, 117))
-    })
+    -- Close button
+    local closeBtn = Instance.new("TextButton", Frame)
+    closeBtn.Size = UDim2.new(0, 26, 0, 26)
+    closeBtn.Position = UDim2.new(1, -34, 0, 8)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 60)
+    closeBtn.BackgroundTransparency = 0.2
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = INK
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 14
+    closeBtn.BorderSizePixel = 0
+    corner(closeBtn, 13)
+    stroke(closeBtn, PURPLE, 1.5, 0.3)
+    closeBtn.MouseButton1Click:Connect(function() Frame.Visible = false end)
 
-    local TextLabel3 = makeLabel(" Account Items ", UDim2.new(0.75, 0, 0.25, 0), UDim2.new(0, 150, 0, 18))
-    TextLabel3.TextSize = 18
-    local UIGradient4 = Instance.new("UIGradient", TextLabel3)
-    UIGradient4.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(204, 52, 235)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(97, 0, 117))
-    })
+    -- Tabs
+    local tabBar = Instance.new("Frame", Frame)
+    tabBar.Size = UDim2.new(0, 440, 0, 34)
+    tabBar.Position = UDim2.new(1, -452, 0, 64)
+    tabBar.BackgroundTransparency = 1
+    tabBar.BorderSizePixel = 0
+    local tabLayout = Instance.new("UIListLayout", tabBar)
+    tabLayout.FillDirection = Enum.FillDirection.Horizontal
+    tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    tabLayout.Padding = UDim.new(0, 8)
 
-    UI.Level = makeLabel("Level: 0", UDim2.new(0.07, 0, 0.35, 0))
-    UI.Race = makeLabel("Race: ?", UDim2.new(0.07, 0, 0.45, 0))
-    UI.Beli = makeLabel("Beli: 0", UDim2.new(0.07, 0, 0.55, 0))
-    UI.Frag = makeLabel("Frag: 0", UDim2.new(0.07, 0, 0.65, 0))
-    UI.GodHuman = makeLabel("🔴 GodHuman", UDim2.new(0.07, 0, 0.80, 0))
-    UI.CDK = makeLabel("🔴 Cursed Dual Katana", UDim2.new(0.4, 0, 0.80, 0))
-    UI.SkullGuitar = makeLabel("🔴 Skull Guitar", UDim2.new(0.07, 0, 0.90, 0))
-    UI.MirrorFractal = makeLabel("🔴 Mirror Fractal", UDim2.new(0.4, 0, 0.90, 0))
-    UI.Valkyrie = makeLabel("🔴 Valkyrie Helm", UDim2.new(0.75, 0, 0.80, 0), UDim2.new(0, 150, 0, 18))
-    UI.PullLever = makeLabel("🔴 Pull Lever", UDim2.new(0.75, 0, 0.90, 0), UDim2.new(0, 150, 0, 18))
-
-    local CanvasGroup = Instance.new("CanvasGroup", Frame2)
-    CanvasGroup.Size = UDim2.new(0.4, 0, 0.35, 0)
-    CanvasGroup.Position = UDim2.new(0.55, 0, 0.35, 0)
-    CanvasGroup.BackgroundTransparency = 1
-
-    local ScrollingFrame = Instance.new("ScrollingFrame", CanvasGroup)
-    ScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    ScrollingFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    ScrollingFrame.Size = UDim2.new(1, 0, 1, 0)
-    ScrollingFrame.BackgroundTransparency = 1
-    ScrollingFrame.BorderSizePixel = 0
-    ScrollingFrame.ScrollBarImageTransparency = 1
-    ScrollingFrame.ScrollBarThickness = 4
-    ScrollingFrame.ZIndex = 2
-
-    local UIListLayout = Instance.new("UIListLayout", ScrollingFrame)
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 2)
-
-    UI.addItemLabel = function(text)
-        local label = Instance.new("TextLabel", ScrollingFrame)
-        label.Size = UDim2.new(1, 0, 0, 18)
-        label.BackgroundTransparency = 1
-        label.Text = text
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 16
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 2
-        return { Destroy = function() label:Destroy() end }
+    local pages = {}
+    local tabBtns = {}
+    local function selectTab(name)
+        for n, pg in pairs(pages) do pg.Visible = (n == name) end
+        for n, b in pairs(tabBtns) do
+            local on = (n == name)
+            b.BackgroundColor3 = on and PURPLE or Color3.fromRGB(45, 25, 70)
+            b.BackgroundTransparency = on and 0 or 0.35
+        end
     end
+    for i, name in ipairs({"Main", "Combat", "Stats", "Settings"}) do
+        local b = Instance.new("TextButton", tabBar)
+        b.LayoutOrder = i
+        b.Size = UDim2.new(0, 102, 0, 32)
+        b.BackgroundColor3 = Color3.fromRGB(45, 25, 70)
+        b.BackgroundTransparency = 0.35
+        b.Text = name
+        b.TextColor3 = INK
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 14
+        b.BorderSizePixel = 0
+        corner(b, 16)
+        stroke(b, PURPLE, 1.2, 0.45)
+        tabBtns[name] = b
+        b.MouseButton1Click:Connect(function() selectTab(name) end)
+    end
+
+    -- Left profile panel
+    local profile = Instance.new("Frame", Frame)
+    profile.Size = UDim2.new(0, 152, 0, 296)
+    profile.Position = UDim2.new(0, 12, 0, 72)
+    profile.BackgroundColor3 = CARD
+    profile.BackgroundTransparency = 0.25
+    profile.BorderSizePixel = 0
+    corner(profile, 14)
+    stroke(profile, PURPLE, 1.2, 0.4)
+
+    local avatar = Instance.new("Frame", profile)
+    avatar.AnchorPoint = Vector2.new(0.5, 0)
+    avatar.Size = UDim2.new(0, 84, 0, 84)
+    avatar.Position = UDim2.new(0.5, 0, 0, 14)
+    avatar.BackgroundColor3 = Color3.fromRGB(55, 28, 85)
+    avatar.BackgroundTransparency = 0.2
+    avatar.BorderSizePixel = 0
+    corner(avatar, 42)
+    stroke(avatar, PINK, 2, 0.1)
+    label(avatar, "HEX", UDim2.new(1, 0, 1, 0), UDim2.new(0, 0, 0, 0), 22, Enum.TextXAlignment.Center).Font = Enum.Font.Fantasy
+
+    UI.Level = label(profile, "Level: 0", UDim2.new(1, -16, 0, 22), UDim2.new(0, 8, 0, 104), 16, Enum.TextXAlignment.Center)
+    local barBg = Instance.new("Frame", profile)
+    barBg.Size = UDim2.new(1, -20, 0, 13)
+    barBg.Position = UDim2.new(0, 10, 0, 130)
+    barBg.BackgroundColor3 = Color3.fromRGB(20, 10, 32)
+    barBg.BackgroundTransparency = 0.2
+    barBg.BorderSizePixel = 0
+    corner(barBg, 7)
+    local barFill = Instance.new("Frame", barBg)
+    barFill.Size = UDim2.new(0, 0, 1, 0)
+    barFill.BackgroundColor3 = PURPLE
+    barFill.BorderSizePixel = 0
+    corner(barFill, 7)
+    grad(barFill, PURPLE, PINK)
+    UI._pct = label(profile, "0%", UDim2.new(1, -16, 0, 16), UDim2.new(0, 8, 0, 145), 12, Enum.TextXAlignment.Center)
+    UI._pct.TextColor3 = Color3.fromRGB(200, 170, 230)
+    UI.Race = label(profile, "Race: ?", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 170), 14)
+    UI.Beli = label(profile, "Beli: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 194), 14)
+    UI.Frag = label(profile, "Frag: 0", UDim2.new(1, -16, 0, 20), UDim2.new(0, 8, 0, 218), 14)
+
+    -- Right pages container
+    local pageHost = Instance.new("Frame", Frame)
+    pageHost.Size = UDim2.new(0, 440, 0, 262)
+    pageHost.Position = UDim2.new(1, -452, 0, 106)
+    pageHost.BackgroundTransparency = 1
+    pageHost.BorderSizePixel = 0
+    local function newPage(name)
+        local p = Instance.new("Frame", pageHost)
+        p.Size = UDim2.new(1, 0, 1, 0)
+        p.BackgroundTransparency = 1
+        p.BorderSizePixel = 0
+        p.Visible = false
+        pages[name] = p
+        return p
+    end
+    local function card(parent, y, h)
+        local c = Instance.new("Frame", parent)
+        c.Size = UDim2.new(1, 0, 0, h)
+        c.Position = UDim2.new(0, 0, 0, y)
+        c.BackgroundColor3 = CARD
+        c.BackgroundTransparency = 0.25
+        c.BorderSizePixel = 0
+        corner(c, 12)
+        stroke(c, PURPLE, 1.2, 0.45)
+        return c
+    end
+    local function cardTitle(parent, text)
+        return label(parent, text, UDim2.new(1, -16, 0, 22), UDim2.new(0, 12, 0, 6), 15)
+    end
+
+    -- Toggle switch component
+    local function makeToggle(parent, text, pos, size, initial, callback)
+        local row = Instance.new("TextButton", parent)
+        row.Size = size
+        row.Position = pos
+        row.BackgroundColor3 = Color3.fromRGB(48, 26, 72)
+        row.BackgroundTransparency = 0.15
+        row.Text = ""
+        row.AutoButtonColor = false
+        row.BorderSizePixel = 0
+        corner(row, 12)
+        stroke(row, PURPLE, 1, 0.5)
+        label(row, text, UDim2.new(1, -64, 1, 0), UDim2.new(0, 12, 0, 0), 13)
+        local pill = Instance.new("Frame", row)
+        pill.AnchorPoint = Vector2.new(1, 0.5)
+        pill.Size = UDim2.new(0, 44, 0, 22)
+        pill.Position = UDim2.new(1, -8, 0.5, 0)
+        pill.BorderSizePixel = 0
+        corner(pill, 11)
+        local knob = Instance.new("Frame", pill)
+        knob.AnchorPoint = Vector2.new(0, 0.5)
+        knob.Size = UDim2.new(0, 18, 0, 18)
+        knob.BackgroundColor3 = INK
+        knob.BorderSizePixel = 0
+        corner(knob, 9)
+        local state = { on = initial }
+        local function redraw()
+            pill.BackgroundColor3 = state.on and PURPLE or Color3.fromRGB(70, 50, 95)
+            pill.BackgroundTransparency = state.on and 0 or 0.3
+            knob.Position = state.on and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+        end
+        redraw()
+        row.MouseButton1Click:Connect(function()
+            state.on = not state.on
+            redraw()
+            pcall(callback, state.on)
+        end)
+        row:SetAttribute("On", initial)
+        return { row = row, set = function(v) state.on = v redraw() row:SetAttribute("On", v) end, get = function() return state.on end }
+    end
+
+    local modePills = {}
+    -- ============ MAIN PAGE ============
+    local mainPg = newPage("Main")
+    do
+        local farmCard = card(mainPg, 0, 96)
+        cardTitle(farmCard, "Auto Farm")
+        -- mode dropdown (cycles weapon mode)
+        local MODES = {"Melee", "Sword", "Gun", "Blox Fruit"}
+        local modeBtn = Instance.new("TextButton", farmCard)
+        modeBtn.Size = UDim2.new(0, 210, 0, 34)
+        modeBtn.Position = UDim2.new(0, 12, 0, 34)
+        modeBtn.BackgroundColor3 = Color3.fromRGB(30, 15, 48)
+        modeBtn.BackgroundTransparency = 0.15
+        modeBtn.TextColor3 = INK
+        modeBtn.Font = Enum.Font.GothamBold
+        modeBtn.TextSize = 14
+        modeBtn.BorderSizePixel = 0
+        corner(modeBtn, 17)
+        stroke(modeBtn, PURPLE, 1.2, 0.4)
+        UI._modeBtn = modeBtn
+        local pills = {}
+        local function setMode(m)
+            _G.ChooseWP = m
+            modeBtn.Text = "  Select Mode      " .. m .. "   v"
+            for _, p in ipairs(modePills) do
+                local on = (p.mode == m)
+                p.btn.BackgroundColor3 = on and PURPLE or Color3.fromRGB(45, 25, 70)
+                p.btn.BackgroundTransparency = on and 0 or 0.35
+            end
+        end
+        UI._setMode = setMode
+        local cur = MODES[1]
+        for _, m in ipairs(MODES) do if m == _G.ChooseWP then cur = m end end
+        modeBtn.MouseButton1Click:Connect(function()
+            for i, m in ipairs(MODES) do
+                if m == _G.ChooseWP then
+                    setMode(MODES[(i % #MODES) + 1])
+                    return
+                end
+            end
+            setMode(MODES[1])
+        end)
+        _G.ChooseWP = cur
+        -- big farm toggle
+        UI._farmToggle = makeToggle(farmCard, "Auto Farm", UDim2.new(0, 232, 0, 34), UDim2.new(0, 196, 0, 34), _G.AutoFarm ~= false, function(on)
+            _G.AutoFarm = on
+        end)
+        if _G.AutoFarm == nil then _G.AutoFarm = true end
+        setMode(cur)
+
+        local hotCard = card(mainPg, 104, 158)
+        cardTitle(hotCard, "Hotkeys / Toggles")
+        makeToggle(hotCard, "Auto Haki", UDim2.new(0, 12, 0, 34), UDim2.new(0, 200, 0, 52), Config.AutoKen ~= false, function(on)
+            Config.AutoKen = on
+        end)
+        makeToggle(hotCard, "Auto Boss", UDim2.new(0, 224, 0, 34), UDim2.new(0, 200, 0, 52), _G.AutoBoss ~= false, function(on)
+            _G.AutoBoss = on
+        end)
+        if _G.AutoBoss == nil then _G.AutoBoss = true end
+        makeToggle(hotCard, "Auto Quest", UDim2.new(0, 12, 0, 94), UDim2.new(0, 200, 0, 52), _G.AutoQuest ~= false, function(on)
+            _G.AutoQuest = on
+        end)
+        if _G.AutoQuest == nil then _G.AutoQuest = true end
+        makeToggle(hotCard, "Auto Collect", UDim2.new(0, 224, 0, 94), UDim2.new(0, 200, 0, 52), _G.AutoCollect ~= false, function(on)
+            _G.AutoCollect = on
+        end)
+        if _G.AutoCollect == nil then _G.AutoCollect = true end
+        -- mode pills are created on the Combat page and shared via modePills
+    end
+
+    -- ============ COMBAT PAGE ============
+    do
+        local combatPg = newPage("Combat")
+        local modeCard = card(combatPg, 0, 122)
+        cardTitle(modeCard, "Combat Style")
+        local pills = modePills
+        for i, m in ipairs({"Melee", "Sword", "Gun", "Blox Fruit"}) do
+            local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+            local b = Instance.new("TextButton", modeCard)
+            b.Size = UDim2.new(0, 202, 0, 34)
+            b.Position = UDim2.new(0, 12 + col * 214, 0, 34 + row * 42)
+            b.Text = m
+            b.TextColor3 = INK
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 14
+            b.BorderSizePixel = 0
+            corner(b, 17)
+            stroke(b, PURPLE, 1.2, 0.4)
+            local entry = { mode = m, btn = b }
+            table.insert(pills, entry)
+            b.MouseButton1Click:Connect(function() UI._setMode(m) end)
+        end
+        UI._setMode(_G.ChooseWP or "Melee")
+        local statusCard = card(combatPg, 130, 132)
+        cardTitle(statusCard, "Status")
+        UI._weapon = label(statusCard, "Weapon: -", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 34), 14)
+        UI._panic = label(statusCard, "State: Calm", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 60), 14)
+        label(statusCard, "Panic Mode auto-hides at low HP.", UDim2.new(1, -24, 0, 40), UDim2.new(0, 12, 0, 86), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+    end
+
+    -- ============ STATS PAGE ============
+    do
+        local statsPg = newPage("Stats")
+        local itemsCard = card(statsPg, 0, 118)
+        cardTitle(itemsCard, "Account Items")
+        UI.GodHuman = label(itemsCard, "🔴 GodHuman", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 32), 14)
+        UI.CDK = label(itemsCard, "🔴 Cursed Dual Katana", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 32), 14)
+        UI.SkullGuitar = label(itemsCard, "🔴 Skull Guitar", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 58), 14)
+        UI.MirrorFractal = label(itemsCard, "🔴 Mirror Fractal", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 58), 14)
+        UI.Valkyrie = label(itemsCard, "🔴 Valkyrie Helm", UDim2.new(0, 200, 0, 20), UDim2.new(0, 12, 0, 84), 14)
+        UI.PullLever = label(itemsCard, "🔴 Pull Lever", UDim2.new(0, 200, 0, 20), UDim2.new(0, 224, 0, 84), 14)
+        local invCard = card(statsPg, 126, 136)
+        cardTitle(invCard, "Inventory")
+        local scroll = Instance.new("ScrollingFrame", invCard)
+        scroll.Size = UDim2.new(1, -24, 1, -44)
+        scroll.Position = UDim2.new(0, 12, 0, 34)
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.ScrollBarImageTransparency = 0.5
+        scroll.ScrollBarThickness = 4
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        local listLayout = Instance.new("UIListLayout", scroll)
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 2)
+        UI.addItemLabel = function(text)
+            local l = Instance.new("TextLabel", scroll)
+            l.Size = UDim2.new(1, 0, 0, 18)
+            l.BackgroundTransparency = 1
+            l.Text = text
+            l.TextColor3 = Color3.fromRGB(215, 190, 235)
+            l.Font = Enum.Font.Gotham
+            l.TextSize = 13
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            return { Destroy = function() l:Destroy() end }
+        end
+    end
+
+    -- ============ SETTINGS PAGE ============
+    do
+        local setPg = newPage("Settings")
+        local gfxCard = card(setPg, 0, 122)
+        cardTitle(gfxCard, "Graphics")
+        local function setBlackscreen(on)
+            Config.Configuration.blackscreen = on
+            pcall(function()
+                local g = CoreGui:FindFirstChild("Hex Blackscreen")
+                    or LP.PlayerGui:FindFirstChild("Hex Blackscreen")
+                    or CoreGui:FindFirstChild("TiroBlackscreen")
+                if g then g.Enabled = on end
+            end)
+        end
+        UI._bsToggle = makeToggle(gfxCard, "Blackscreen", UDim2.new(0, 12, 0, 34), UDim2.new(0, 200, 0, 52), Config.Configuration and Config.Configuration.blackscreen or false, setBlackscreen)
+        label(gfxCard, "Hide the 3D world to save battery.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 92), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+        local infoCard = card(setPg, 130, 132)
+        cardTitle(infoCard, "About")
+        label(infoCard, "Hex Hub v2.6", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 34), 14)
+        label(infoCard, "Update 30 ready | Tween 180", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 60), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+        label(infoCard, "Main window is draggable.", UDim2.new(1, -24, 0, 20), UDim2.new(0, 12, 0, 86), 12).TextColor3 = Color3.fromRGB(190, 160, 210)
+    end
+
+    selectTab("Main")
+
+    -- Animated shine on title + frame stroke
+    task.spawn(function()
+        while true do
+            local tw = TweenService:Create(titleGrad, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1, false, 0), { Rotation = 360 })
+            tw:Play()
+            tw.Completed:Wait()
+            titleGrad.Rotation = 0
+        end
+    end)
 
     local godhumanUnlocked = false
     if CommF then
@@ -6867,33 +7186,25 @@ task.spawn(function()
     end
     UI.getGodHuman = function() return godhumanUnlocked end
 
-    for _, grad in ipairs({UIGradient, UIGradient2, UIGradient3, UIGradient4}) do
-        task.spawn(function()
-            while true do
-                local tween = TweenService:Create(grad, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1, false, 0), { Rotation = 360 })
-                tween:Play()
-                tween.Completed:Wait()
-                grad.Rotation = 0
-            end
-        end)
-    end
-
-    local ToggleBtn = Instance.new("ImageButton")
-    ToggleBtn.Name = "Noguchi Toggle"
+    local ToggleBtn = Instance.new("TextButton")
+    ToggleBtn.Name = "Hex Hub Toggle"
     ToggleBtn.Size = UDim2.new(0, 55, 0, 55)
     ToggleBtn.AnchorPoint = Vector2.new(0, 0.5)
     ToggleBtn.Position = UDim2.new(0, 15, 0.5, 0)
-    ToggleBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-    ToggleBtn.Image = "rbxthumb://type=Asset&id=100653737935048&w=420&h=420"
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(45, 20, 70)
+    ToggleBtn.BackgroundTransparency = 0.1
+    ToggleBtn.Text = "HEX"
+    ToggleBtn.TextColor3 = INK
+    ToggleBtn.Font = Enum.Font.GothamBlack
+    ToggleBtn.TextSize = 15
+    ToggleBtn.BorderSizePixel = 0
     ToggleBtn.ZIndex = 100
     ToggleBtn.Draggable = true
     ToggleBtn.Active = true
         ToggleBtn.Parent = ScreenGui
-    Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(1, 0)
-    local BtnStroke = Instance.new("UIStroke", ToggleBtn)
-    BtnStroke.Color = Color3.fromRGB(255, 255, 255)
-    BtnStroke.Thickness = 2.5
-    BtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    corner(ToggleBtn, 27)
+    local toggleStroke = stroke(ToggleBtn, PINK, 2.5, 0.1)
+    grad(toggleStroke, PURPLE, PINK)
     ToggleBtn.MouseButton1Click:Connect(function()
         Frame.Visible = not Frame.Visible
     end)
@@ -6903,11 +7214,22 @@ task.spawn(function()
             pcall(function()
                 local data = LP:FindFirstChild("Data")
                 if data then
-                    UI.Level.Text = "Level: " .. tostring(data:FindFirstChild("Level") and data.Level.Value or 0)
+                    local lv = data:FindFirstChild("Level") and data.Level.Value or 0
+                    UI.Level.Text = "Level: " .. tostring(lv)
                     UI.Race.Text = "Race: " .. tostring(data:FindFirstChild("Race") and data.Race.Value or "?")
                     UI.Beli.Text = "Beli: " .. tostring(data:FindFirstChild("Beli") and data.Beli.Value or 0)
                     local frags = data:FindFirstChild("Fragments")
                     UI.Frag.Text = "Frag: " .. (frags and tostring(frags.Value) or "Only Sea 2, 3")
+                    local frac = math.clamp(lv / 3000, 0, 1)
+                    barFill.Size = UDim2.new(frac, 0, 1, 0)
+                    UI._pct.Text = string.format("%.1f%%", frac * 100)
+                end
+                if UI._weapon then
+                    UI._weapon.Text = "Weapon: " .. tostring(_G.SelectWeapon or "-")
+                    UI._panic.Text = _G.PanicModeActive and "State: PANIC (hiding)" or "State: Calm"
+                end
+                if UI._modeBtn and _G.ChooseWP and not string.find(UI._modeBtn.Text, _G.ChooseWP, 1, true) then
+                    UI._setMode(_G.ChooseWP)
                 end
             end)
         end
