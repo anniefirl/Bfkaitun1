@@ -1,3 +1,25 @@
+-- Tiro Kaitun Modulo v2.5 (English edition — all comments and UI text translated
+-- from Vietnamese/Portuguese; no logic changed).
+-- Tiro Kaitun Modulo v2.4 (supports Update 30 "Sea 1 Rework" 2026-09-05).
+-- Changelog v2.4:
+-- 1. MaxLevel 2800 -> 3000 (2800 grind + 200 Secret Levels manually).
+--  2. Boss Update-30: Thunder God -> Lightning God, Wysper -> Sky Warlord,
+--    Magma Admiral -> Magma General; alias fallback in Enemies lookup so
+--    code calling old name never gets stuck farming. Chief Warden + Swan (boss) were
+--    DELETED by game: removed from SwordBossTask/reference table (Wardens Sword awaiting
+--    confirmation of new drop source, not guessing).
+-- 3. Added Magnet (new fruit) + Advanced Combat (new style) to reference table.
+--    Island Secrets (40 manual quests via Rumor dialogue) NOT yet automatic — needs to be done
+--    manually to unlock 2800 -> 3000. Normal farm quests usually adapt (read live data).
+-- Tiro Kaitun Modulo v2.3-improved (based on v2.2).
+-- Changelog v2.3:
+-- 1. Call hoangtuveu() at END OF FILE — previously ~700 lines (EXTRAS/redeem/gacha,
+--    VOID ATTACK, HEX UI) were after the infinite loop so they NEVER ran.
+-- 2. AutoHop: fixed inverse condition + runs loop every 60s (old: ran once).
+-- 3. Hop(): normalized player count parameter (old: Hop('string') comparison error).
+-- 4. State loop: writefile/refresh every 5s instead of EVERY FRAME.
+-- 5. Implemented Config.Configuration.blackscreen flag (previously broken).
+-- 6. Weapon selection: uses Players.LocalPlayer + scans currently held weapon.
 Config = {
     Team = "Pirates",
     Configuration = {
@@ -61,8 +83,12 @@ Config = {
     AutoSea2 = true,
     AutoSea3 = true,
     AutoRaidIce_TargetFragments = 5000,
+    -- [UPD30] Island Secrets: 40 manual quests (Rumor dialogue with Quest NPC) unlock
+    -- cap 2800 -> 3000. Script NOT yet automatic for secrets — this flag stays false until
+    -- secrets mechanism is reversed; turning it on has no effect yet.
+    AutoIslandSecrets = false,
 }
-print("[Tiro] Script da duoc nap, dang cho game load...")
+print("[Tiro] Script loaded, waiting for game load...")
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
@@ -72,59 +98,48 @@ local CoreGui = game:GetService("CoreGui")
 
 local lp = Players.LocalPlayer
 
-print("[Main] Bắt đầu Tiro Kaitun Modulo v2.2...")
+print("[Main] Starting Tiro Kaitun Modulo v2.2...")
 timeee = os.time()
 local W_angle = 30
 local lastChange = tick()
 
 -- ============================================================
--- [ADDED] CHỌN VŨ KHÍ (TỪ T-REX HUB)
+-- [ADDED] WEAPON SELECTION (FROM T-REX HUB)
+-- [IMPROVED v2.3] Use Players.LocalPlayer directly — old version read global
+-- LocalPlayer, which was nil at that time (assigned at line ~5692) so pcall
+-- swallowed the error, and the loop ran uselessly. Scans both Character and Backpack (weapons
+-- currently held in hand are not in the Backpack).
 -- ============================================================
-_G.ChooseWP = "Melee"  -- Mặc định Melee (có thể đổi thành Sword, Gun, Blox Fruit)
+_G.ChooseWP = "Melee"  -- Default Melee (can be changed to Sword, Gun, Blox Fruit)
 _G.SelectWeapon = nil
 
--- Luồng tự động cập nhật vũ khí
+-- Automatic weapon update flow
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
-            local bp = LocalPlayer:FindFirstChild("Backpack")
-            if not bp then return end
-            if _G.ChooseWP == "Melee" then
-                for _, v in pairs(bp:GetChildren()) do
-                    if v:IsA("Tool") and v.ToolTip == "Melee" then
-                        _G.SelectWeapon = v.Name
-                        break
+            local me = game:GetService("Players").LocalPlayer
+            if not me then return end
+            local want = _G.ChooseWP
+            if want ~= "Melee" and want ~= "Sword" and want ~= "Gun" and want ~= "Blox Fruit" then return end
+            local function scan(container)
+                if not container then return nil end
+                for _, v in pairs(container:GetChildren()) do
+                    if v:IsA("Tool") and v.ToolTip == want then
+                        return v.Name
                     end
                 end
-            elseif _G.ChooseWP == "Sword" then
-                for _, v in pairs(bp:GetChildren()) do
-                    if v:IsA("Tool") and v.ToolTip == "Sword" then
-                        _G.SelectWeapon = v.Name
-                        break
-                    end
-                end
-            elseif _G.ChooseWP == "Gun" then
-                for _, v in pairs(bp:GetChildren()) do
-                    if v:IsA("Tool") and v.ToolTip == "Gun" then
-                        _G.SelectWeapon = v.Name
-                        break
-                    end
-                end
-            elseif _G.ChooseWP == "Blox Fruit" then
-                for _, v in pairs(bp:GetChildren()) do
-                    if v:IsA("Tool") and v.ToolTip == "Blox Fruit" then
-                        _G.SelectWeapon = v.Name
-                        break
-                    end
-                end
+                return nil
             end
+            -- Prioritize currently held weapon (Character), then Backpack.
+            -- Keep old value if temporarily not found (prevents losing weapon during death/respawn).
+            _G.SelectWeapon = scan(me.Character) or scan(me:FindFirstChild("Backpack")) or _G.SelectWeapon
         end)
     end
 end)
 
 -- ============================================================
--- [ADDED] GAME DATA (từ data_lua.txt) — bảng tham chiếu thuần
--- KHÔNG wire vào đâu trực tiếp; dùng khi cần tra level→mob/quest
+-- [ADDED] GAME DATA (from data_lua.txt) — pure reference table
+-- NOT wired into anything directly; used when needing to look up level→mob/quest
 -- ============================================================
 local GameData = {
 	QUESTS = {
@@ -142,17 +157,17 @@ local GameData = {
 			{150, 174, "Sky Bandit", "SkyQuest", 1},
 			{175, 189, "Dark Master", "SkyQuest", 2},
 			{190, 209, "Prisoner", "PrisonerQuest", 1},
-			{210, 249, "Dangerous Prisoner", "PrisonerQuest", 2, {"Warden", 220, "ImpelQuest", 1}, {"Chief Warden", 230, "ImpelQuest", 2}, {"Swan", 240, "ImpelQuest", 3}},
+			{210, 249, "Dangerous Prisoner", "PrisonerQuest", 2, {"Warden", 220, "ImpelQuest", 1}}, -- [UPD30] Chief Warden + Swan (boss) have been deleted by the game
 			{250, 274, "Toga Warrior", "ColosseumQuest", 1},
 			{275, 299, "Gladiator", "ColosseumQuest", 2},
 			{300, 324, "Military Soldier", "MagmaQuest", 1},
-			{325, 374, "Military Spy", "MagmaQuest", 2, "Magma Admiral", 350},
+			{325, 374, "Military Spy", "MagmaQuest", 2, "Magma General", 350},
 			{375, 399, "Fishman Warrior", "FishmanQuest", 1},
 			{400, 449, "Fishman Commando", "FishmanQuest", 2, "Fishman Lord", 425},
 			{450, 474, "God's Guard", "SkyExp1Quest", 1},
-			{475, 524, "Shanda", "SkyExp1Quest", 2, "Wysper", 500},
+			{475, 524, "Shanda", "SkyExp1Quest", 2, "Sky Warlord", 500},
 			{525, 549, "Royal Squad", "SkyExp2Quest", 1},
-			{550, 624, "Royal Soldier", "SkyExp2Quest", 2, "Thunder God", 575},
+			{550, 624, "Royal Soldier", "SkyExp2Quest", 2, "Lightning God", 575},
 			{625, 649, "Galley Pirate", "FountainQuest", 1},
 			{650, 9999, "Galley Captain", "FountainQuest", 2, "Cyborg", 675},
 		},
@@ -233,12 +248,11 @@ local GameData = {
 			{105, "Yeti", "SnowQuest", 3, CFrame.new(1387, 87, -1298)},
 			{130, "Vice Admiral", "MarineQuest2", 2, CFrame.new(-5036, 29, 4325)},
 			{220, "Warden", "ImpelQuest", 1, CFrame.new(5192, 3, 686)},
-			{230, "Chief Warden", "ImpelQuest", 2, CFrame.new(5192, 3, 686)},
-			{240, "Swan", "ImpelQuest", 3, CFrame.new(5192, 3, 686)},
-			{350, "Magma Admiral", "MagmaQuest", 3, CFrame.new(-5315, 12, 8517)},
+			-- [UPD30] Chief Warden + Swan (boss) deleted by game — keep Warden (above line).
+			{350, "Magma General", "MagmaQuest", 3, CFrame.new(-5315, 12, 8517)},
 			{425, "Fishman Lord", "FishmanQuest", 3, CFrame.new(61123, 18, 1569)},
-			{500, "Wysper", "SkyExp1Quest", 3, CFrame.new(-7862, 5546, -380)},
-			{575, "Thunder God", "SkyExp2Quest", 3, CFrame.new(-7903, 5636, -1411)},
+			{500, "Sky Warlord", "SkyExp1Quest", 3, CFrame.new(-7862, 5546, -380)},
+			{575, "Lightning God", "SkyExp2Quest", 3, CFrame.new(-7903, 5636, -1411)},
 			{675, "Cyborg", "FountainQuest", 3, CFrame.new(5258, 39, 4050)},
 		},
 		Sea_2 = {
@@ -259,9 +273,9 @@ local GameData = {
 	},
 	MaterialEnemies = {
 		Sea_1 = {
-			["Angel Wings"] = { "Shanda", "Royal Squad", "Royal Soldier", "Wysper", "Thunder God" },
+			["Angel Wings"] = { "Shanda", "Royal Squad", "Royal Soldier", "Sky Warlord", "Lightning God" },
 			["Leather + Scrap Metal"] = { "Brute", "Pirate" },
-			["Magma Ore"] = { "Military Soldier", "Military Spy", "Magma Admiral" },
+			["Magma Ore"] = { "Military Soldier", "Military Spy", "Magma General" },
 			["Fish Tail"] = { "Fishman Warrior", "Fishman Commando", "Fishman Lord" },
 		},
 		Sea_2 = {
@@ -289,12 +303,12 @@ local GameData = {
 		Sea_3 = { "Leather + Scrap Metal", "Demonic Wisp", "Conjured Cocoa", "Dragon Scale", "Gunpowder", "Fish Tail", "Mini Tusk", "Nightmare Catcher" }
 	},
 	BossNames = {
-		Sea_1 = { "The Gorilla King", "Chief", "Yeti", "Vice Admiral", "Warden", "Chief Warden", "Swan", "Magma Admiral", "Fishman Lord", "Wysper", "Thunder God", "Cyborg", "Saw" },
+		Sea_1 = { "The Gorilla King", "Chief", "Yeti", "Vice Admiral", "Warden", "Magma General", "Fishman Lord", "Sky Warlord", "Lightning God", "Cyborg", "Saw" }, -- [UPD30] Chief Warden + Swan deleted; 3 boss names changed
 		Sea_2 = { "Diamond", "Jeremy", "Orbitus", "Smoke Admiral", "Awakened Ice Admiral", "Tide Keeper", "Don Swan" },
 		Sea_3 = { "Stone", "Kilo Admiral", "Captain Elephant", "Beautiful Pirate", "Cake Queen" }
 	},
 	MeleeNames = {
-		Sea_1 = { "Black Leg", "Electro", "Fishman Karate" },
+		Sea_1 = { "Black Leg", "Electro", "Fishman Karate", "Advanced Combat" }, -- [UPD30] new style (auto-buy unclear on remote/teacher)
 		Sea_2 = { "Death Step", "Dragon Claw", "Sharkman Karate", "Superhuman" },
 		Sea_3 = { "Dragon Talon", "Electric Claw", "Godhuman", "Sanguine Art" }
 	},
@@ -786,7 +800,8 @@ local GameData = {
 		"Yeti-Yeti",
 		"Kitsune-Kitsune",
 		"Control-Control",
-		"Dragon-Dragon"
+		"Dragon-Dragon",
+		"Magnet-Magnet" -- [UPD3
 	}
 }
 
@@ -795,7 +810,7 @@ function hoangtuveu()
     repeat task.wait() until game.CoreGui
 
     -- ============================================================
-    -- UI TỪ DYNAMICISLAND_AXIOM-1.LUA (CÓ DISCORD + CONTAINER)
+    -- UI FROM DYNAMICISLAND_AXIOM-1.LUA (WITH DISCORD + CONTAINER)
     -- ============================================================
     local gui = Instance.new('ScreenGui')
     gui.Name = "KaitunUI"
@@ -927,7 +942,7 @@ function hoangtuveu()
     W.RegisterForBlur = function() end
 
     -- ============================================================
-    -- LOGIC TỪ TEST.TXT (GIỮ NGUYÊN, BAO GỒM FAST ATTACK VÀ EQUIP)
+    -- LOGIC FROM TEST.TXT (KEEP AS-IS, INCLUDING FAST ATTACK AND EQUIP)
     -- ============================================================
     if false then
         spawn(function()
@@ -954,7 +969,7 @@ function hoangtuveu()
         task.wait()
     until SetText
     alert('load 2')
-    SetText('MainTextLabel', 'Initalizing Script..')
+    SetText('MainTextLabel', 'Initializing Script..')
     local J = "Rua_Hub/Blox_Fruit/Assets/"
     ScriptStorage = {IsInitalized = false, PlayerData = {}, Melees = {}, CurrentMeleeData = {}, Enemies = {}, Tools = {}, Backpack = {}, IgnoreStoreFruits = {}, Connections = {LocalPlayer = {}}, Task = {}, Tracebacks = {}, TaskController = {}, TracebackUpdater = {}, Interface = W, NPCs = {}, Map = {}}
     Players = game.Players
@@ -966,16 +981,33 @@ function hoangtuveu()
     Lighting = game:GetService('Lighting')
     Services = {}
     setmetatable(Services, {__index = function(J, J) return game:GetService(J) end})
-    setmetatable(ScriptStorage.Enemies, {__index = function(J, J) return Services.Workspace.Enemies:FindFirstChild(J) or Services.ReplicatedStorage:FindFirstChild(J) end})
+    -- [UPD30] Boss alias renamed (Thunder God -> Lightning God, Wysper ->
+    -- Sky Warlord, Magma Admiral -> Magma General): old name calls still find
+    -- correct new boss, no farming glitches. FindFirstChild(nil) will error so must guard.
+    BossNameAlias = {["Thunder God"] = "Lightning God", ["Wysper"] = "Sky Warlord", ["Magma Admiral"] = "Magma General"}
+    local function findEnemy(name)
+        local e = Services.Workspace.Enemies:FindFirstChild(name)
+        if e then return e end
+        local alias = BossNameAlias[name]
+        if alias then
+            e = Services.Workspace.Enemies:FindFirstChild(alias)
+            if e then return e end
+        end
+        e = Services.ReplicatedStorage:FindFirstChild(name)
+        if e then return e end
+        if alias then return Services.ReplicatedStorage:FindFirstChild(alias) end
+        return nil
+    end
+    setmetatable(ScriptStorage.Enemies, {__index = function(_, name) return findEnemy(name) end})
     setmetatable(ScriptStorage.Map, {__index = function(J, J) return Services.Workspace.Map:FindFirstChild(J) or Services.Workspace:FindFirstChild(J) end})
     setmetatable(ScriptStorage.Tools, {__index = function(J, J) return LocalPlayer.Character:FindFirstChild(J) or (LocalPlayer:FindFirstChild('Backpack') and LocalPlayer.Backpack:FindFirstChild(J)) end})
     setmetatable(ScriptStorage.NPCs, {__index = function(J, J) if not J then return end; return workspace.NPCs:FindFirstChild(J) or game.ReplicatedStorage.NPCs:FindFirstChild(J) end})
 
     -- ============================================================
-    -- [NEW] PANIC MODE + AUTO KEN — đặt sớm ngay đầu, chạy độc lập qua
-    -- task.spawn riêng (không qua TasksOrder) để phản ứng máu thấp NGAY
-    -- LẬP TỨC, không phải chờ tới lượt dispatch. Gộp chung Auto-Ken vào
-    -- đây theo đúng yêu cầu boss man.
+    -- [NEW] PANIC MODE + AUTO KEN — set early at start, run independently via
+    -- separate task.spawn (not via TasksOrder) to react to low health IMMEDIATELY,
+    -- not waiting for dispatch turn. Group Auto-Ken here as per boss man's request.
+    -- this is exactly as boss man requested.
     -- ============================================================
     _G.PanicModeActive = false
 
@@ -988,11 +1020,11 @@ function hoangtuveu()
                 local hum  = char and char:FindFirstChildOfClass("Humanoid")
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
 
-                -- [FIXED] Nhân vật chết lúc đang trốn trên cao (_G.PanicModeActive
-                -- = true) mà không reset state → lúc hồi sinh, nhân vật MỚI (máu
-                -- đầy, đứng dưới đất) bị code tưởng "đang trốn, cần giữ độ cao cũ"
-                -- → kéo lên trời vô lý ngay sau khi respawn. Reset ngay khi phát
-                -- hiện chết, không chỉ return im lặng.
+                -- [FIXED] Character dies while hiding on high ground (_G.PanicModeActive
+                -- = true) without resetting state → upon respawn, NEW character (full
+                -- health, standing on ground) is treated by code as "hiding, need to keep old altitude"
+                -- → pulled into the sky illogically right after respawn. Reset immediately when death
+                -- is detected, not just a silent return.
                 if not hum or not hrp or hum.Health <= 0 then
                     if _G.PanicModeActive then
                         _G.PanicModeActive = false
@@ -1004,44 +1036,44 @@ function hoangtuveu()
                 local pct = (hum.Health / hum.MaxHealth) * 100
 
                 if not _G.PanicModeActive and pct < Config.PanicMode.LowHealthPercent then
-                    -- [FIXED] Huỷ tween đang chạy (nếu có) trước khi ép CFrame —
-                    -- không thì TweenController đang chạy dở (VD: LevelFarm đang
-                    -- tween tới quest) sẽ tiếp tục update CFrame theo hướng CŨ ở
-                    -- frame sau, kéo nhân vật xuống lại gần như ngay lập tức,
-                    -- vô hiệu hoá panic mode.
+                    -- [FIXED] Cancel running tween (if any) before forcing CFrame —
+                    -- otherwise TweenController currently running (e.g., LevelFarm currently
+                    -- tweening to quest) will continue updating CFrame in OLD direction on
+                    -- next frame, pulling character back down almost immediately,
+                    -- disabling panic mode.
                     pcall(function() if TweenInstance then TweenInstance:Cancel() end end)
                     _G.PanicModeActive = true
                     escapeY = hrp.Position.Y + Config.PanicMode.EscapeHeight
-                    SetTask("MainTask", "⚠️ PANIC MODE | Máu " .. math.floor(pct) .. "% — bay lên trốn")
+                    SetTask("MainTask", "⚠️ PANIC MODE | Health " .. math.floor(pct) .. "% — flying up to hide")
                     hrp.CFrame = CFrame.new(hrp.Position.X, escapeY, hrp.Position.Z)
 
                 elseif _G.PanicModeActive then
-                    -- Đang trốn trên cao — giữ nguyên độ cao, chờ hồi máu
+                    -- Hiding on high ground — maintain altitude, wait for health recovery
                     if hrp.Position.Y < (escapeY or 0) - 50 then
                         pcall(function() if TweenInstance then TweenInstance:Cancel() end end)
                         hrp.CFrame = CFrame.new(hrp.Position.X, escapeY, hrp.Position.Z)
                     end
                     if pct >= Config.PanicMode.SafeHealthPercent then
-                        -- [NEW] Hồi đủ máu → bay xuống lại, tắt panic mode
-                        SetTask("MainTask", "✅ Máu hồi " .. math.floor(pct) .. "% — bay xuống tiếp tục farm")
+                        -- [NEW] Health fully recovered → fly back down, turn off panic mode
+                        SetTask("MainTask", "✅ Health recovered " .. math.floor(pct) .. "% — flying down to continue farming")
                         _G.PanicModeActive = false
                         escapeY = nil
                     else
-                        SetTask("SubTask", "PANIC MODE | Đang trốn trên cao — máu " .. math.floor(pct) .. "%/" .. Config.PanicMode.SafeHealthPercent .. "%")
+                        SetTask("SubTask", "PANIC MODE | Hiding on high ground — health " .. math.floor(pct) .. "%/" .. Config.PanicMode.SafeHealthPercent .. "%")
                     end
                 end
             end)
         end
     end)
 
-    -- [NEW] Auto Ken (Haki Quan Sát / Observation Haki) — spam liên tục
-    -- tới khi mở được thì ngưng, không spam nữa
+    -- [NEW] Auto Ken (Observation Haki) — spam continuously
+    -- until opened, then stop spamming
     task.spawn(function()
         while task.wait(1) do
             pcall(function()
                 if not Config.AutoKen then return end
                 if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HasKen") then
-                    return -- đã mở rồi, không spam nữa
+                    return -- already opened, stop spamming
                 end
                 Services.ReplicatedStorage.Remotes.CommE:FireServer("Ken", true)
             end)
@@ -1247,8 +1279,8 @@ end
     RefreshPlayerData()
     function RegisterLocalPlayerEventsConnection()
         task.spawn(function()
-            -- [FIXED - bớt delay theo yêu cầu boss man] 6s → 3s. Đủ để
-            -- Character/Data ổn định sau spawn trước khi check HasBuso.
+            -- [FIXED - reduced delay per boss man's request] 6s → 3s. Enough for
+            -- Character/Data to stabilize after spawn before checking HasBuso.
             task.wait(3)
             if LocalPlayer.Character:FindFirstChild('HasBuso') then return end
             Remotes.CommF_:InvokeServer("Buso")
@@ -1298,7 +1330,7 @@ end
     print(1)
 
     -- ============================================================
-    -- BẢNG MELEE & DATA (GIỮ NGUYÊN)
+    -- MELEE & DATA TABLE (KEEP AS IS)
     -- ============================================================
     MeleesTable = {"Black Leg", 'Electro', "Fishman Karate", "Dragon Claw", "Superhuman", 'Death Step', 'Electric Claw', 'Sharkman Karate', 'Dragon Talon', "Godhuman"}
     MeleesId = {'BlackLeg', "Electro", 'FishmanKarate', "DragonClaw", "Superhuman", 'DeathStep', "ElectricClaw", "SharkmanKarate", 'DragonTalon', 'Godhuman'}
@@ -1307,54 +1339,55 @@ end
     GodhumanMaterials = {['Fish Tail'] = {20, 3, {"Fishman Raider", "Fishman Captain"}, {'DeepForestIsland3', 1, 1775, 'Turtle Adventure Quest Giver'}}, ['Dragon Scale'] = {10, 3, {"Dragon Crew Warrior", "Dragon Crew Archer"}, {'DragonCrewQuest', 1, 1575, 'Dragon Crew Quest Giver'}}, ["Magma Ore"] = {20, 2, {'Magma Ninja'}, {"FireSideQuest", 1, 1100, "Fire Quest Giver"}}, ["Mystic Droplet"] = {10, 2, {'Sea Soldier', 'Water Fighter'}, {'ForgottenQuest', 2, 1425, 'Forgotten Quest Giver'}}}
     SeaIndexes = {"Main", "Dressrosa", "Zou"}
 
-    -- [FIXED - QUAN TRỌNG] RefreshTasksData là first-match-wins: handler
-    -- nào Refresh() trả về giá trị TRƯỚC trong mảng này thắng NGAY, dừng
-    -- luôn (return ở dòng ~4051), không kiểm tra tiếp các handler sau.
-    -- "LevelFarm" đứng đầu + Refresh gần như LUÔN trả về (1/2/4, hiếm khi
-    -- nil) → nó thắng MỌI vòng, SpecialBossesTask/SwordBossTask/
-    -- CakePrinceTask/BossesTask phía sau KHÔNG BAO GIỜ được chạy tới —
-    -- đây mới là lý do thật "không thấy farm boss lấy item", không phải
-    -- do boss hiếm/config sai. Đưa hết boss-farming lên TRƯỚC LevelFarm:
-    -- boss nào đang farm được thì ưu tiên, hết boss mới rơi xuống LevelFarm.
-    -- [FIXED - XUNG ĐỘT] Lúc reorder ưu tiên boss-farming (lượt trước), tao
-    -- viết đè nguyên khối TasksOrder và LÀM MẤT 5 handler đã fix từ rất lâu
+    -- [FIXED - IMPORTANT] RefreshTasksData is first-match-wins: whichever handler
+    -- Refresh() returns a value FIRST in this array wins IMMEDIATELY, stops
+    -- (return at line ~4051), does not check subsequent handlers.
+    -- "LevelFarm" is at the top + Refresh almost ALWAYS returns (1/2/4, rarely
+    -- nil) → it wins EVERY cycle, SpecialBossesTask/SwordBossTask/
+    -- CakePrinceTask/BossesTask behind it NEVER get run —
+    -- this is the real reason "boss farming for items isn't seen", not
+    -- because bosses are rare/config is wrong. Move all boss-farming BEFORE LevelFarm:
+    -- priority to any boss currently farmable, only drop to LevelFarm when bosses are out.
+    -- [FIXED - CONFLICT] While reordering boss-farming priority (previous turn), I
+    -- overwrote the entire TasksOrder block and LOST 5 handlers fixed long ago
     -- ("Saber","CursedDualKatana","SoulGuitar","EvoRace","RaceAwakening") —
-    -- y hệt bug gốc "registered nhưng không nằm trong TasksOrder = không
-    -- bao giờ chạy" mà tao đã tốn nhiều lượt để tìm ra và fix trước đó.
-    -- Khôi phục lại đầy đủ, vẫn giữ thứ tự ưu tiên boss-farming mới.
-    -- [FIXED - theo spec 2e/2g] RaidController tự check "fr > 5000 then
-    -- return nil" ĐÚNG rồi (dòng ~3005) — vấn đề là nó đứng SAU
+    -- exactly like the original bug "registered but not in TasksOrder = never
+    -- runs" that I spent many turns finding and fixing previously.
+    -- Fully restored, while maintaining the new boss-farming priority order.
+    -- [FIXED - per spec 2e/2g] RaidController self-checks "fr > 5000 then
+    -- return nil" CORRECTLY (line ~3005) — the issue is it stands AFTER
     -- CakePrinceTask/MeleesController/CDK trong TasksOrder (first-match-
-    -- wins), nên dù Fragments cạn, mấy handler "training" phía trước vẫn
-    -- thắng dispatch trước, RaidController không bao giờ được chạy tới.
-    -- Đưa RaidController/AutoRaidIce lên TRƯỚC các hoạt động "training"
-    -- (không khẩn cấp như boss hiếm) — Fragments thấp thì tự nhường,
-    -- Fragments đủ thì RaidController tự trả nil, rơi xuống training tiếp.
-    -- [FIXED - theo spec 2g] "MeleesController" đứng CUỐI danh sách khiến
-    -- LevelFarm (đứng rất trước, Refresh gần như luôn trả về giá trị) LUÔN
-    -- thắng dispatch — "melee đủ mastery thì dừng LevelFarm chuyển bước
-    -- tiếp theo" không bao giờ có cơ hội xảy ra vì MeleesController không
-    -- bao giờ được chạy tới. Đưa lên ngang hàng ưu tiên với CakePrinceTask
-    -- (trước LevelFarm) — mua melee/kiểm tra điều kiện tiên quyết giờ mới
-    -- thật sự preempt được leveling thường.
+    -- wins), so even if Fragments are depleted, the "training" handlers in front still
+    -- win dispatch first, RaidController must never run.
+    -- Place RaidController/AutoRaidIce BEFORE "training" activities
+    -- (not as urgent as rare bosses) — yield if Fragments are low,
+    -- If there are enough Fragments, RaidController returns nil and proceeds to training.
+    -- [FIXED - per 2g spec] "MeleesController" being at the END of the list meant
+    -- LevelFarm (which is much earlier and Refresh almost always returns a value) ALWAYS
+    -- won the dispatch — "stop LevelFarm and move to the next step when melee mastery is sufficient"
+    -- never had a chance to happen because MeleesController was
+    -- never reached. Moving it to the same priority level as CakePrinceTask
+    -- (before LevelFarm) — buying melee/checking prerequisites now
+    -- actually preempts regular leveling.
     TasksOrder = {
         "SpecialBossesTask", "SwordBossTask", "BossesTask",
         "RaidController", "AutoRaidIce",
         "CakePrinceTask", "MeleesController",
         "LevelFarm", "Tushita", 'Yama',
         "Saber", "CursedDualKatana", "SoulGuitar", "EvoRace", "RaceAwakening",
-        -- [FIXED - xung đột code phát hiện khi rà toàn bộ] Bỏ "Wenlocktoad"
-        -- và "ExpRedeem" khỏi danh sách này — cả 2 CÓ gọi :Register() (tạo
-        -- task slot rỗng) nhưng KHÔNG hề có RegisterMethod("Refresh"/"Start")
-        -- ở bất kỳ đâu trong file. Dispatcher (RefreshTasksData, có "if k
-        -- then" guard trước khi gọi) không crash vì việc này, nhưng mỗi tick
-        -- vẫn tốn 1 lần lookup FunctionsHandler[name] + kiểm tra Initalized
-        -- cho 2 task không bao giờ làm gì cả — dọn bỏ. Cũng bỏ luôn bản
-        -- "ThirdSeaPuzzle" bị lặp 2 lần (1 lần double-quote, 1 lần single-
-        -- quote) — hệ thống first-match-wins nên lần lặp lại chỉ tốn thêm
-        -- 1 lần gọi Refresh() y hệt trong CÙNG 1 tick, không có tác dụng gì.
+        -- [FIXED - code conflict detected during full scan] Removing "Wenlocktoad"
+        -- and "ExpRedeem" from this list — both CALL :Register() (creating
+        -- empty task slots) but DO NOT have RegisterMethod("Refresh"/"Start")
+        -- anywhere in the file. Dispatcher (RefreshTasksData, which has an "if k
+        -- then" guard before calling) doesn't crash because of this, but every tick
+        -- still wastes one lookup of FunctionsHandler[name] + Initialized check
+        -- for 2 tasks that never do anything — cleaning up. Also removing the
+        -- "ThirdSeaPuzzle" entry that was duplicated (one double-quoted, one single-
+        -- quoted) — first-match-wins system, so the duplicate only wasted
+        -- one additional identical Refresh() call in the SAME tick, serving no purpose.
         'Trevor', "UtillyItemsActivitation", 'ColosseumPuzzle', "ThirdSeaPuzzle", "PirateRaid", "SecondSeaPuzzle", "CollectDrops"}
-    MaxLevel = 2800
+    -- [UPD30] Cap 2800 -> 3000 (2800 grind + 200 Secret Levels manually).
+    MaxLevel = 3000
     placeId = game.PlaceId
     if placeId == 85211729168715 or placeId == 2753915549 then
         Sea = 'Main'
@@ -1367,28 +1400,28 @@ end
         SeaIndex = 3
     end
     Portals = ({{Vector3.new(-7894.6201171875, 5545.49169921875, -380.246346191406), Vector3.new(-4607.82275390625, 872.5422973632812, -1667.556884765625), Vector3.new(61163.8515625, 11.759522438049316, 1819.7841796875), Vector3.new(3876.280517578125, 35.10614013671875, -1939.3201904296875)}, {Vector3.new(-288.46246337890625, 306.130615234375, 597.9988403320312), Vector3.new(2284.912109375, 15.152046203613281, 905.48291015625), Vector3.new(923.21252441406, 126.9760055542, 32852.83203125), Vector3.new(-6508.5581054688, 89.034996032715, -132.83953857422)}, {}})[SeaIndex]
-    -- [FIXED] Bỏ 'Cake Prince' khỏi đây — giờ có CakePrinceTask riêng
-    -- (chủ động farm quái mở khoá + tự trigger summon), tránh 2 hệ thống
-    -- cùng đánh 1 boss gây xung đột combat
+    -- [FIXED] Removing 'Cake Prince' from here — now has a separate CakePrinceTask
+    -- (actively farms mobs to unlock + triggers summon), avoiding two systems
+    -- attacking the same boss and causing combat conflicts.
     BossesOrder = {"Awakened Ice Admiral", "Tide Keeper", 'Deandre', "Urban", "Diablo", 'Soul Reaper'}
     BossesOrderLevel = {['Awakened Ice Admiral'] = 700, ['Tide Keeper'] = 700, ['Deandre'] = 1500, ['Urban'] = 1500, ['Diablo'] = 1500, ['Soul Reaper'] = 1500}
     BossesOrderWL = {["Deandre"] = 1500, ["Urban"] = 1500, ["Diablo"] = 1500, ['Don Swan'] = 1100, ["Awakened Ice Admiral"] = 700, ['Tide Keeper'] = 700}
-    -- [ADDED] Katakuri — KHÔNG tìm thấy trong file nat kaitun hay bất kỳ
-    -- nguồn nào tao có, nên đây là giá trị đoán an toàn (level 2150, giống
-    -- mức các boss cuối game khác). Nếu sai level thật, báo tao sửa lại.
-    -- [FIXED] "Hải Tặc Đào Hoa" = "Beautiful Pirates" — trước đây tao đoán
-    -- nhầm là Cake Prince, boss man đã sửa lại đúng tên. Toạ độ lấy từ
-    -- file bypass-teleport verified (Vector3.new(5319, 23, -93)) — level
-    -- chưa có nguồn xác nhận, tạm để 1500 giống tier Deandre/Urban/Diablo,
-    -- báo tao nếu sai.
+    -- [ADDED] Katakuri — NOT found in nat kaitun file or any
+    -- source I have, so this is a safe guess value (level 2150, similar
+    -- to other end-game bosses). If the real level is wrong, let me know to fix it.
+    -- [FIXED] "Hải Tặc Đào Hoa" (Peach Blossom Pirates) = "Beautiful Pirates" — previously guessed
+    -- wrong as Cake Prince, boss man has corrected the name. Coordinates taken from
+    -- verified bypass-teleport file (Vector3.new(5319, 23, -93)) — level
+    -- has no confirmed source, temporarily set to 1500 like Deandre/Urban/Diablo tier,
+    -- let me know if wrong.
     SpecialBossesOrder = {["Core"] = 700, ['Darkbeard'] = 700, ["Katakuri"] = 2150, ["Beautiful Pirates"] = 1500}
-    -- [NEW - theo spec] Toạ độ farm Bones ở Haunted Castle, dùng chung cho
-    -- Fire Essence (Dragon Talon), Hallow Essence (CDK), và Yama/Tushita
+    -- [NEW - per spec] Bone farming coordinates at Haunted Castle, shared for
+    -- Fire Essence (Dragon Talon), Hallow Essence (CDK), and Yama/Tushita.
     HAUNTED_CASTLE_BONES_CF = CFrame.new(-8817.880859375, 191.16761779785, 6298.6557617188)
     BeautifulPiratesCF = CFrame.new(5319, 23, -93)
 
-    -- Config.Sword và Config.BossWeapons giờ nằm ở đầu file (khối Config = {...})
-    -- theo đúng yêu cầu "để config lên trên cùng" — không định nghĩa lại ở đây nữa
+    -- Config.Sword and Config.BossWeapons are now at the top of the file (Config = {...} block)
+    -- per the requirement "put config at the very top" — no longer defined here.
     BlankTablets = {"Segment6", 'Segment2', 'Segment8', "Segment9", 'Segment5'}
     Trophy = {["Segment1"] = "Trophy1", ["Segment3"] = "Trophy2", ['Segment4'] = "Trophy3", ['Segment7'] = "Trophy4", ["Segment10"] = "Trophy5"}
     Pipes = {['Part1'] = 'Really black', ['Part2'] = 'Really black', ["Part3"] = "Dusty Rose", ['Part4'] = "Storm blue", ['Part5'] = 'Really black', ['Part6'] = "Parsley green", ["Part7"] = 'Really black', ["Part8"] = "Dusty Rose", ["Part9"] = 'Really black', ['Part10'] = 'Storm blue'}
@@ -1437,16 +1470,16 @@ end
     function RoundVector3Down(W) return Vector3.new(math.floor(W.X / 10) * 10, math.floor(W.Y / 10) * 10, math.floor(W.Z / 10) * 10) end
 
     -- ============================================================
-    -- XOAY VÒNG TRÒN CŨ (DÙNG TICK)
+    -- OLD CIRCLE ROTATION (USING TICK)
     -- ============================================================
-    -- [FIXED] W_angle/lastChange chưa từng được khởi tạo — gọi hàm này lần
-    -- đầu sẽ crash ("attempt to compare nil with number") vì so sánh
-    -- W_angle (nil) > 50000. Khởi tạo trước khi dùng.
+    -- [FIXED] W_angle/lastChange were never initialized — calling this function for the
+    -- first time would crash ("attempt to compare nil with number") because
+    -- W_angle (nil) > 50000. Initialize before use.
     W_angle = W_angle or 0
     lastChange = lastChange or tick()
 
-    -- [UPDATED] Đổi tốc độ theo bản boss man đưa: 0.01s / 20° (mượt hơn
-    -- bản cũ 0.4s / 80°, xoay liên tục thay vì giật cục)
+    -- [UPDATED] Changed speed according to boss man's version: 0.01s / 20° (smoother
+    -- than old version 0.4s / 80°, continuous rotation instead of jerky)
     CaculateCircreDirection = function(a)
         if W_angle > 50000 then W_angle = 60 end
         W_angle = W_angle + ((tick() - lastChange) > 0.01 and 20 or 0)
@@ -1486,7 +1519,7 @@ end
     end
 
     -- ============================================================
-    -- HÀM HỖ TRỢ AUTO FULL MELEE
+    -- AUTO FULL MELEE SUPPORT FUNCTION
     -- ============================================================
     function GetBP(meleeName)
         local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -1537,9 +1570,9 @@ end
             end
         end
         if W == "Godhuman" then
-            -- [FIXED - verified từ message_10] BuyGodhuman cần gọi 2 LẦN
-            -- (true, rồi không tham số) — generic 1-lần bên dưới không đủ,
-            -- y hệt pattern Dragon Talon đã verify trước đó.
+            -- [FIXED - verified from message_10] BuyGodhuman needs to be called 2 TIMES
+            -- (true, then no parameters) — generic 1-time below is not enough,
+            -- identical to the Dragon Talon pattern verified previously.
             Remotes.CommF_:InvokeServer("BuyGodhuman", true)
             local result = Remotes.CommF_:InvokeServer("BuyGodhuman")
             if not table.find(J, W) then table.insert(J, W) end
@@ -1646,11 +1679,11 @@ end
     -- ============================================================
     TweenController = {}
 
-    -- [ADDED - theo yêu cầu boss man: "dùng tween của file red magic hub"]
-    -- Port block-tween + sync loop từ main_red_magic_beta.txt — tween 1
-    -- Part vô hình ("block") thay vì tween thẳng HumanoidRootPart, nhân
-    -- vật tự "bám" theo block khi đang farm (getgenv().OnFarm), tránh anti-
-    -- cheat detect việc set CFrame của HRP trực tiếp mỗi frame.
+    -- [ADDED - per boss man's request: "use tween from red magic hub file"]
+    -- Port block-tween + sync loop from main_red_magic_beta.txt — tween 1
+    -- Invisible Part ("block") instead of tweening straight to HumanoidRootPart, character
+    -- "sticks" to the block while farming (getgenv().OnFarm), avoiding anti-
+    -- cheat detection of setting HRP CFrame directly every frame.
     local block = Instance.new("Part", workspace)
     block.Size = Vector3.new(1, 1, 1)
     block.Name = "Rip_Indra"
@@ -1744,7 +1777,9 @@ end
         if X then if os.time() - 0 > 30 then for W = 1, 10, 1 do task.wait() end end end
     end
     function TweenController.Tween2(W, a)
-        TweenInstance2 = Services.TweenService:Create(W, TweenInfo.new(CaculateDistance(W.CFrame, a) / 50, Enum.EasingStyle.Linear), {CFrame = ConvertTo(CFrame, a) - Vector3.new(0, 0, 0)})
+        -- FIXED speed 180 like the main tween (was 50 — kept uniform so any
+        -- caller moves at the same speed; currently unused).
+        TweenInstance2 = Services.TweenService:Create(W, TweenInfo.new(CaculateDistance(W.CFrame, a) / 180, Enum.EasingStyle.Linear), {CFrame = ConvertTo(CFrame, a) - Vector3.new(0, 0, 0)})
         TweenInstance2:Play()
     end
     function CheckItem(itemName)
@@ -1761,15 +1796,15 @@ end
         return false
     end
 
-    -- [FIXED - theo yêu cầu boss man: "bỏ bypass teleport"] Đã xoá hẳn toàn
-    -- bộ cụm hàm bypass-teleport (CheckLegendaryItems/InArea/GetSpawnPoint/
-    -- CanBypassTeleport/GetBypassCFrame/BypassTP) — kiểm tra kỹ trước khi
-    -- xoá: không còn nơi nào khác trong file gọi các hàm này (cả 2 điểm
-    -- gọi BypassTP() duy nhất, trong TweenController.Create và
-    -- _SgCollectChest, đã được thay bằng tween thường ở trên).
+    -- [FIXED - per boss man's request: "remove bypass teleport"] Completely removed
+    -- the entire bypass-teleport function group (CheckLegendaryItems/InArea/GetSpawnPoint/
+    -- CanBypassTeleport/GetBypassCFrame/BypassTP) — check carefully before
+    -- deleting: no other place in the file calls these functions (both
+    -- single calls to BypassTP(), in TweenController.Create and
+    -- _SgCollectChest, have been replaced by regular tweens above).
 
     -- ============================================================
-    -- [FIXED] TWEEN CONTROLLER - GIỮ NGUYÊN 200/190
+    -- TWEEN CONTROLLER - FIXED SPEED 180 (studs/sec) EVERYWHERE
     -- ============================================================
     function TweenController.Create(W)
         if not W or TweenDebounce then return end
@@ -1779,10 +1814,10 @@ end
         local hrp = character and character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
-        -- [FIXED - theo yêu cầu boss man: "bỏ bypass teleport"] Đã xoá hẳn
-        -- nhánh BypassTP (dist>=4000 → đổi spawn point) — không còn dùng
-        -- cơ chế bypass qua spawn point nữa, mọi khoảng cách đều tween bình
-        -- thường qua block (từ main_red_magic_beta.txt).
+        -- [FIXED - per boss man's request: "remove bypass teleport"] Completely removed
+        -- BypassTP branch (dist>=4000 → change spawn point) — no longer using
+        -- spawn point bypass mechanism, all distances are regular tweens
+        -- usually via block (from main_red_magic_beta.txt).
         for _, part in ipairs(character:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
         end
@@ -1820,16 +1855,14 @@ end
             return
         end
 
-        -- [FIXED - theo yêu cầu boss man: "chỉnh lên 160 cho nhanh ko vượt
-        -- quá 160"] Bỏ hẳn bảng 110/100 cũ — dùng 1 mức tốc độ CỐ ĐỊNH 160
-        -- (giống tween của main_red_magic_beta.txt, chỉ đổi số chia 300 →
-        -- 160 để nhanh hơn), không có mức nào vượt quá con số này.
-        local divisor = 160
+        -- [FIXED] FIXED speed 180 (studs/sec) for every movement tween — no more
+        -- variable speed tables. duration = distance / 180, Linear easing.
+        local divisor = 180
         local duration = dist / divisor
 
-        -- [FIXED - port tween từ main_red_magic_beta.txt] Tween "block"
-        -- (Part vô hình) thay vì tween thẳng hrp — nhân vật tự bám theo
-        -- block qua vòng lặp sync đã thêm ở trên (getgenv().OnFarm).
+        -- [FIXED - port tween from main_red_magic_beta.txt] Tween "block"
+        -- (Invisible Part) instead of tweening straight to hrp — character automatically follows
+        -- block via the sync loop added above (getgenv().OnFarm).
         shouldTween = true
         TweenInstance = Services.TweenService:Create(block, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = a})
         TweenInstance:Play()
@@ -1846,7 +1879,7 @@ end
     end
 
     -- ============================================================
-    -- FAST ATTACK & EQUIP WEAPON (LẤY TỪ TEST.TXT - GIỮ NGUYÊN)
+    -- FAST ATTACK & EQUIP WEAPON (TAKEN FROM TEST.TXT - KEEP AS IS)
     -- ============================================================
     local W = {}
     local a = game:GetService('Players')
@@ -1908,12 +1941,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     CombatController = {GRAB = false, GRAB_DISTANCE = SeaIndex == 1 and 250 or 350, MAX_ATTACK_DURATION = 2, MAX_ATTACK_DURATION_2 = 60, LEVITATE_TIME = 0, CurrentIndex = 1}
 
     -- ============================================================
-    -- [NEW] BRING MOBS — trích từ Maru Hub, boss man yêu cầu chỉnh
-    -- bringRange 888 → 300 (giảm cho gọn, đỡ kéo quái từ quá xa)
-    -- Config.BringMobs bật/tắt; PosMon/Mon set từ bên ngoài lúc cần kéo
-    -- quái về 1 điểm cụ thể (VD: farm quest cần gom quái).
-    -- KHÔNG lock quái mà CombatController đang target dở — tránh xung đột
-    -- 2 hệ thống cùng giữ 1 con quái theo 2 cách khác nhau.
+    -- [NEW] BRING MOBS — extracted from Maru Hub, boss man requested to adjust
+    -- bringRange 888 → 300 (reduced for neatness, avoid pulling mobs from too far)
+    -- Config.BringMobs on/off; PosMon/Mon set from outside when needing to pull
+    -- mobs to a specific point (e.g., farm quest needs to group mobs).
+    -- DO NOT lock mobs that CombatController is currently targeting — avoid conflict
+    -- between 2 systems holding 1 mob in 2 different ways.
     -- ============================================================
     getgenv().BringMonster = getgenv().BringMonster or false
     PosMon = PosMon or nil
@@ -1933,7 +1966,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             local pinCF     = targetCF * CFrame.new(0, 3, 0)
             local maxPull   = 20
             local pulled    = 0
-            local bringRange = 300 -- [FIXED] 888 → 300 theo yêu cầu boss man
+            local bringRange = 300 -- [FIXED] 888 → 300 per boss man's request
 
             local targetName = (Mon and Mon ~= "") and Mon or nil
 
@@ -1980,11 +2013,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 for _, v in ipairs(enemyFolder:GetChildren()) do
                     if pulled >= maxPull then break end
                     if targetName and v.Name ~= targetName then continue end
-                    -- (Đã bỏ check "đừng lock quái CombatController đang đánh" —
-                    -- field CombatController.CurrentTarget không tồn tại thật
-                    -- trong code, check đó luôn so với nil, không bảo vệ được
-                    -- gì. Thực tế lock (đứng im) không cản CombatController
-                    -- gây damage, nên không cần check này.)
+                    -- (Removed check "don't lock mobs CombatController is fighting" —
+                    -- field CombatController.CurrentTarget doesn't actually exist
+                    -- in code, that check always compared against nil, protecting
+                    -- nothing. In reality, locking (standing still) doesn't stop CombatController
+                    -- from dealing damage, so this check is unnecessary.)
 
                     local hrp = v:FindFirstChild("HumanoidRootPart")
                     local hum = v:FindFirstChild("Humanoid")
@@ -2064,7 +2097,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
     function CombatController.Attack(h, X, w, D)
         if ScriptStorage.Tools["Sweet Chalice"] and getsenv(game.ReplicatedStorage.GuideModule)["_G"]['InCombat'] then
-            pcall(function() if TweenInstance then TweenInstance:Cancel() end end) -- [FIXED] không tween về (0,0,0) khi Sweet Chalice InCombat
+            pcall(function() if TweenInstance then TweenInstance:Cancel() end end) -- [FIXED] do not tween back to (0,0,0) when Sweet Chalice InCombat
             return
         end
         sethiddenproperty(game.Players.LocalPlayer, 'SimulationRadius', math.huge)
@@ -2090,7 +2123,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 while task.wait() do
                     if _G.Stop then return end
                     if ScriptStorage.Tools["Sweet Chalice"] and getsenv(game.ReplicatedStorage.GuideModule)["_G"]["InCombat"] then
-                        pcall(function() if TweenInstance then TweenInstance:Cancel() end end) -- [FIXED] không tween về (0,0,0) khi Sweet Chalice InCombat
+                        pcall(function() if TweenInstance then TweenInstance:Cancel() end end) -- [FIXED] do not tween back to (0,0,0) when Sweet Chalice InCombat
                         return
                     end
                     local C = MonResult:FindFirstChild('Humanoid')
@@ -2132,7 +2165,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                             local y = D[math.random(1, #D)]
                             SendKey(y, .31)
                         else
-                            -- [FIXED] Ưu tiên dùng _G.SelectWeapon nếu có
+                            -- [FIXED] Priority use _G.SelectWeapon if available
                             if _G.SelectWeapon and CheckItem(_G.SelectWeapon) then
                                 FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(_G.SelectWeapon)
                             else
@@ -2276,12 +2309,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     FunctionsHandler.UtillyItemsActivitation:Register()
 
     -- ============================================================
-    -- AUTO FULL MELEE - TƯƠNG THÍCH VỚI LEVEL FARM
+    -- AUTO FULL MELEE - COMPATIBLE WITH FARM LEVEL
     -- ============================================================
-    -- [NEW] V1 → V2 pairing — dùng để biết trái nào đang farm mastery là
-    -- V1 của võ nào, và tên teacher/style tương ứng theo MeleePrices
+    -- [NEW] V1 → V2 pairing — used to know which fruit is farming mastery is
+    -- V1 of which fighting-style, and corresponding teacher/style according to MeleePrices
     local V1ToV2 = {
-        ["Black Leg"]      = "Death Step",       -- "Dark Step" (tên Teacher)
+        ["Black Leg"]      = "Death Step",       -- "Dark Step" (Teacher name)
         ["Electro"]        = "Electric Claw",
         ["Fishman Karate"] = "Sharkman Karate",   -- "Water Kung Fu"
         ["Dragon Claw"]    = "Dragon Talon",
@@ -2290,10 +2323,10 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     FunctionsHandler.MeleesController:RegisterMethod("Refresh", function()
         if not Config.Items.AutoFullyMelees or not Config.Melee.AutoBuy then return nil end
         if ScriptStorage.PlayerData.Level < 200 then return nil end
-        -- [FIXED] Bỏ "if _G.Level then return nil end" — đây là khóa VĨNH VIỄN,
-        -- một khi thiếu tiền 1 lần là MeleesController tắt luôn mãi mãi vì
-        -- không có chỗ nào khác set lại _G.Level = false. Bỏ hẳn cờ này,
-        -- để Refresh tự nhiên re-check mỗi vòng — rẻ, an toàn, tự phục hồi.
+        -- [FIXED] Remove "if _G.Level then return nil end" — this is a PERMANENT lock,
+        -- once money is missing one time MeleesController shuts down forever because
+        -- there is nowhere else to set _G.Level = false. Remove this flag entirely,
+        -- let Refresh naturally re-check every cycle — cheap, safe, self-recovering.
 
         local allMelees = {"Black Leg", "Electro", "Fishman Karate", "Dragon Claw", "Superhuman", "Death Step", "Sharkman Karate", "Electric Claw", "Dragon Talon", "Godhuman"}
         local hasAll = true
@@ -2304,7 +2337,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
         end
         if hasAll then
-            SetTask('MainTask', 'Auto Full Melee | ✅ Đã có tất cả!')
+            SetTask('MainTask', 'Auto Full Melee | ✅ All acquired!')
             return nil
         end
         return true
@@ -2315,13 +2348,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if ScriptStorage.PlayerData.Level < 200 then return end
 
         local meleeList = {
-            -- [FIXED - LỖI NỀN TẢNG] Trước đây key = "BuyBlackLeg" v.v. —
-            -- nhưng BuyMelee() TỰ thêm "Buy" ở trong ('Buy' .. W), nên gọi
-            -- ra remote "BuyBuyBlackLeg" — KHÔNG TỒN TẠI, mua không bao giờ
-            -- thành công. Đồng thời special-case DragonClaw/Godhuman trong
-            -- BuyMelee so sánh W=="DragonClaw"/"Godhuman" (không "Buy...")
-            -- nên trước đây KHÔNG BAO GIỜ khớp, luôn rơi vào nhánh generic
-            -- sai. Bỏ hẳn tiền tố "Buy" khỏi key — để BuyMelee tự thêm.
+            -- [FIXED - PLATFORM ERROR] Previously key = "BuyBlackLeg" etc. —
+            -- but BuyMelee() AUTOMATICALLY adds "Buy" inside ('Buy' .. W), so it calls
+            -- remote "BuyBuyBlackLeg" — DOES NOT EXIST, purchase never
+            -- succeeds. Also special-case DragonClaw/Godhuman in
+            -- BuyMelee comparing W=="DragonClaw"/"Godhuman" (no "Buy...")
+            -- so previously it NEVER matched, always fell into the wrong generic branch.
+            -- Remove "Buy" prefix from key entirely — let BuyMelee add it.
             {name = "Black Leg", key = "BlackLeg", price = {Beli = 150000}, levelReq = 300},
             {name = "Electro", key = "Electro", price = {Beli = 500000}, levelReq = 300},
             {name = "Fishman Karate", key = "FishmanKarate", price = {Beli = 750000}, levelReq = 300},
@@ -2334,12 +2367,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             {name = "Godhuman", key = "Godhuman", price = {Beli = 5000000, Fragments = 5000}, levelReq = 400, needMaterials = true},
         }
 
-        -- [NEW] Cổng kiểm tra "mọi thứ đủ điều kiện chưa" — boss man yêu
-        -- cầu: chỉ khi TẤT CẢ 9 melee (V1+V2, gồm cả Superhuman — spec mới
-        -- yêu cầu Superhuman cũng phải đạt 500 trước Godhuman, KHÁC với
-        -- thiết kế cũ của tao lúc trước loại trừ nó, đã sửa lại) đã MUA
-        -- XONG và ĐẠT mastery mục tiêu (V1=500, V2=400) thì mới bắt đầu
-        -- farm vật liệu/F/Beli cho Godhuman.
+        -- [NEW] Check gate "is everything eligible yet" — boss man's request:
+        -- only when ALL 9 melee (V1+V2, including Superhuman — new spec
+        -- requires Superhuman to also reach 500 before Godhuman, DIFFERENT from
+        -- my old design that excluded it, now fixed) have been BOUGHT
+        -- and REACHED target mastery (V1=500, V2=400) then start
+        -- farming materials/F/Beli for Godhuman.
         local MASTERY_GATE_MELEES = {
             {name = "Black Leg",       target = Config.Melee.RaidAtV1Mastery},
             {name = "Electro",         target = Config.Melee.RaidAtV1Mastery},
@@ -2354,7 +2387,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
         local function AllMeleesReady()
             for _, m in ipairs(MASTERY_GATE_MELEES) do
-                if not CheckItem(m.name) then return false, m.name .. " (chưa mua)" end
+                if not CheckItem(m.name) then return false, m.name .. " (not purchased)" end
                 local mst = ScriptStorage.Melees[m.name] or 0
                 if mst < m.target then return false, m.name .. " (" .. mst .. "/" .. m.target .. ")" end
             end
@@ -2362,8 +2395,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
 
 
-        -- Sea nào không có tên trong bảng = thầy đó không đứng ở Sea đó,
-        -- phải qua Sea khác (Sea 3 có đủ cả 8 thầy nên dùng làm fallback)
+        -- Any Sea not named in the table = the teacher is not at that Sea,
+        -- must go to another Sea (Sea 3 has all 8 teachers so it's used as fallback)
         local TeacherLocations = {
             ["Water Kung-fu Teacher"] = {
                 [1] = CFrame.new(61586.96, 19.58, 987.59),
@@ -2398,9 +2431,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 [3] = CFrame.new(-13774.1, 333.73, -9879.91),
             },
         }
-        -- [NEW] Melee nào → thầy nào (khớp với tên trong MeleePrices.Buy)
-        -- Dragon Claw ("Sabi") và Superhuman ("Martial Arts Master") KHÔNG
-        -- có trong data boss man cho — để trống, không bịa toạ độ
+        -- [NEW] Which Melee → which teacher (matches name in MeleePrices.Buy)
+        -- Dragon Claw ("Sabi") and Superhuman ("Martial Arts Master") are NOT
+        -- in the data boss man gave — leave blank, do not invent coordinates
         local MeleeTeacher = {
             ["Fishman Karate"]   = "Water Kung-fu Teacher",
             ["Electro"]          = "Mad Scientist",
@@ -2412,13 +2445,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             ["Godhuman"]         = "Ancient Monk",
         }
 
-        -- [NEW] Tween tới đúng thầy trước khi mua — đây là phần BỊ THIẾU
-        -- khiến "mua bị lỗi" (gọi remote mua nhưng nhân vật không đứng gần
-        -- NPC nên server từ chối). Sea hiện tại có thầy → dùng luôn; không
-        -- có → qua Sea 3 (thầy nào cũng có mặt ở đó).
+        -- [NEW] Tween to the correct teacher before buying — this was the MISSING part
+        -- causing "purchase error" (called buy remote but character was not near
+        -- NPC so server rejected). If current Sea has teacher → use it; otherwise
+        -- go to Sea 3 (all teachers are present there).
         local function GoToTeacher(meleeName)
             local teacher = MeleeTeacher[meleeName]
-            if not teacher then return true end -- không có data vị trí, bỏ qua bước này
+            if not teacher then return true end -- no position data, skip this step
             local locs = TeacherLocations[teacher]
             if not locs then return true end
 
@@ -2428,7 +2461,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     Remotes.CommF_:InvokeServer("TravelZou")
                     return false
                 end
-                return true -- đang ở Sea 3 mà bảng thiếu toạ độ Sea 3 (không nên xảy ra)
+                return true -- currently in Sea 3 but table lacks Sea 3 coordinates (should not happen)
             end
 
             if CaculateDistance(cf) > 10 then
@@ -2443,11 +2476,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
             local bp = CheckItem(melee.name)
             if not bp then
-                -- [NEW] Dragon Claw V1 cần riêng 1500 Fragments — nếu chưa
-                -- đủ thì đây chính là lý do phải farm raid (raid cho
-                -- Fragments), không phải lỗi gì khác
+                -- [NEW] Dragon Claw V1 needs separate 1500 Fragments — if not
+                -- enough, this is the reason to farm raid (raid for
+                -- Fragments), not any other error
                 if melee.name == "Dragon Claw" and (ScriptStorage.PlayerData.Fragments or 0) < 1500 then
-                    SetTask('MainTask', 'Auto Full Melee | Dragon Claw cần 1500 Fragments — đang farm Raid (' .. (ScriptStorage.PlayerData.Fragments or 0) .. '/1500)')
+                    SetTask('MainTask', 'Auto Full Melee | Dragon Claw needs 1500 Fragments — farming Raid (' .. (ScriptStorage.PlayerData.Fragments or 0) .. '/1500)')
                     return
                 end
 
@@ -2457,18 +2490,18 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                  (currency == "Fragments" and ScriptStorage.PlayerData.Fragments) or 0
                     if have < amount then canBuy = false end
                 end
-                -- [FIXED] needKey/needFireEssence/needMaterials trước đây
-                -- nằm ở nhánh "ĐÃ SỞ HỮU" (else bên dưới) — vô nghĩa, vì đây
-                -- là điều kiện TIÊN QUYẾT phải có TRƯỚC khi mua, không phải
-                -- thứ cần check sau khi đã mua xong. Chuyển về đúng chỗ.
+                -- [FIXED] needKey/needFireEssence/needMaterials previously
+                -- were in the "ALREADY OWNED" branch (else below) — meaningless, because these
+                -- are PREREQUISITES that must be met BEFORE buying, not
+                -- something to check after buying. Moved to the correct place.
 
                 if melee.needKey and not CheckItem(melee.needKey) then
-                    SetTask('MainTask', 'Auto Full Melee | Lấy ' .. melee.needKey .. ' cho ' .. melee.name)
+                    SetTask('MainTask', 'Auto Full Melee | Getting ' .. melee.needKey .. ' cho ' .. melee.name)
                     if melee.needKey == "Library Key" then
                         local admiral = GetConnectionEnemies("Awakened Ice Admiral")
                         if admiral then
-                            -- [FIXED - giảm delay] Attack() đã tự block chờ
-                            -- hạ xong rồi, wait(2) sau đó là dư thừa
+                            -- [FIXED - reduced delay] Attack() already blocks until
+                            -- finished, wait(2) after is redundant
                             CombatController.Attack("Awakened Ice Admiral")
                         else
                             TweenController.Create(CFrame.new(5668.978, 28.52, -6483.352))
@@ -2484,12 +2517,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     return
                 end
 
-                -- [NEW] Điều kiện tiên quyết mastery — verified từ raw_6:
-                -- Superhuman cần Dragon Claw đạt 300 mastery trước khi mua
+                -- [NEW] Mastery prerequisite — verified from raw_6:
+                -- Superhuman needs Dragon Claw to reach 300 mastery before buying 172
                 if melee.needMastery then
                     local preMastery = ScriptStorage.Melees[melee.needMastery.item] or 0
                     if not CheckItem(melee.needMastery.item) or preMastery < melee.needMastery.value then
-                        SetTask('MainTask', 'Auto Full Melee | Cần ' .. melee.needMastery.item .. ' đạt ' .. melee.needMastery.value .. ' mastery trước (hiện ' .. preMastery .. ') để mua ' .. melee.name)
+                        SetTask('MainTask', 'Auto Full Melee | Need ' .. melee.needMastery.item .. ' to reach ' .. melee.needMastery.value .. ' mastery first (current ' .. preMastery .. ') to buy ' .. melee.name)
                         return
                     end
                 end
@@ -2498,11 +2531,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     local hasFireEssence = CheckItem("Fire Essence")
 
                     if hasFireEssence then
-                        -- [FIXED] Verified từ raw_6: equip Fire Essence rồi gọi
-                        -- BuyDragonTalon HAI LẦN (true, rồi không tham số) —
-                        -- trước đây tao chỉ farm bones, chưa từng thật sự dùng
-                        -- Fire Essence để mua Dragon Talon.
-                        SetTask('MainTask', 'Auto Full Melee | Dùng Fire Essence mua Dragon Talon')
+                        -- [FIXED] Verified from raw_6: equip Fire Essence then call
+                        -- BuyDragonTalon TWO TIMES (true, then no parameters) —
+                        -- previously I only farmed bones, never actually used
+                        -- Fire Essence to buy Dragon Talon.
+                        SetTask('MainTask', 'Auto Full Melee | Using Fire Essence to buy Dragon Talon')
                         FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Fire Essence")
                         task.wait(0.5)
                         Remotes.CommF_:InvokeServer("BuyDragonTalon", true)
@@ -2511,11 +2544,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     end
 
                     if not CheckItem(melee.name) then
-                        -- [FIXED] Ngưỡng thật 500 Bones (giống CDK), burst-buy
-                        -- tới khi hết, không nhỏ giọt buy(1,1) từng lần
+                        -- [FIXED] Real threshold 500 Bones (like CDK), burst-buy
+                        -- until empty, not drip-feeding buy(1,1) each time
                         local bonesCount = Remotes.CommF_:InvokeServer("Bones", "Check")
                         if bonesCount and bonesCount > 500 then
-                            SetTask('MainTask', 'Auto Full Melee | Đổi Bones lấy Fire Essence (' .. bonesCount .. ')')
+                            SetTask('MainTask', 'Auto Full Melee | Exchanging Bones for Fire Essence (' .. bonesCount .. ')')
                             repeat
                                 Remotes.CommF_:InvokeServer("Bones", "Buy", 1, 1)
                                 task.wait(0.2)
@@ -2525,9 +2558,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                         end
                         if not ScriptStorage.Enemies["Reborn Skeleton"] and not ScriptStorage.Enemies["Living Zombie"]
                             and not ScriptStorage.Enemies["Demonic Soul"] and not ScriptStorage.Enemies["Posessed Mummy"] then
-                            -- [NEW] Chưa thấy quái gần đây → di chuyển tới đúng
-                            -- điểm farm Haunted Castle thay vì đứng im chờ
-                            SetTask('MainTask', 'Auto Full Melee | Di chuyển tới Haunted Castle farm Bones (' .. (bonesCount or 0) .. '/500)')
+                            -- [NEW] No monsters seen nearby → move to the correct
+                            -- Haunted Castle farm point instead of standing still waiting
+                            SetTask('MainTask', 'Auto Full Melee | Moving to Haunted Castle to farm Bones (' .. (bonesCount or 0) .. '/500)')
                             TweenController.Create(HAUNTED_CASTLE_BONES_CF)
                             return
                         end
@@ -2538,11 +2571,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 end
 
                 if melee.needMaterials then
-                    -- [NEW] Cổng "mọi thứ đủ điều kiện chưa" — CHỈ farm vật
-                    -- liệu Godhuman khi cả 8 melee kia đã mua + đủ mastery
+                    -- [NEW] "is everything qualified yet" gate — ONLY farm
+                    -- Godhuman materials when all 8 other melees are bought + enough mastery
                     local ready, reason = AllMeleesReady()
                     if not ready then
-                        SetTask('MainTask', 'Auto Full Melee | Godhuman: chưa đủ điều kiện — ' .. (reason or "?"))
+                        SetTask('MainTask', 'Auto Full Melee | Godhuman: requirements not met —' .. (reason or "?"))
                         return
                     end
 
@@ -2564,67 +2597,67 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                             return
                         end
                     end
-                    -- Đủ vật liệu rồi → rơi xuống check tiền/Fragments bên dưới để mua
+                    -- Enough materials → fall down to check money/Fragments below to buy
                 end
 
                 if canBuy then
-                    -- [FIXED - LỖI SÂU] GoToTeacher() của tao tự tween thủ
-                    -- công là ĐÚNG (dùng toạ độ verified, phủ đủ cả
-                    -- DragonClaw/Superhuman mà bảng gốc BindedMeleeNPCNames
-                    -- KHÔNG có) — giữ nguyên bước này.
-                    -- NHƯNG cách gọi remote SAI: trước giờ chỉ gọi
-                    -- BuyMelee(key, true) — đây là proxy CHECK (2nd arg=true
-                    -- khiến auto-navigate của proxy gốc dòng ~427 bị skip vì
-                    -- nó yêu cầu "not h"), KHÔNG PHẢI lệnh mua thật. Phải gọi
-                    -- THÊM lần 2 KHÔNG kèm true để proxy thật sự chạy nhánh
-                    -- mua (dòng 446 luôn invoke thật, nhưng cần đủ 2 bước để
-                    -- J ghi nhận hợp lệ trước khi bước 2 chạy).
+                    -- [FIXED - DEEP BUG] My GoToTeacher() handles tweening manually
+                    -- logic is CORRECT (uses verified coordinates, covering both
+                    -- DragonClaw/Superhuman that the original BindedMeleeNPCNames table
+                    -- DOES NOT have) — keep this step.
+                    -- BUT the remote call was WRONG: previously only called
+                    -- BuyMelee(key, true) — this is a proxy CHECK (2nd arg=true
+                    -- makes the original proxy's auto-navigate at line ~427 get skipped because
+                    -- it requires "not h"), NOT the actual buy command. Must call
+                    -- a SECOND time WITHOUT true so the proxy actually runs the
+                    -- buy branch (line 446 always invokes for real, but needs 2 steps for
+                    -- J to register as valid before step 2 runs).
                     if not GoToTeacher(melee.name) then
-                        SetTask('MainTask', 'Auto Full Melee | Di chuyển tới ' .. (MeleeTeacher[melee.name] or "?") .. ' để mua ' .. melee.name)
+                        SetTask('MainTask', 'Auto Full Melee | Moving to ' .. (MeleeTeacher[melee.name] or "?") .. ' to buy ' .. melee.name)
                         return
                     end
                     SetTask('MainTask', 'Auto Full Melee | Mua ' .. melee.name)
-                    local checkResult = BuyMelee(melee.key, true)  -- Bước 1: check (proxy ghi vào J nếu hợp lệ)
+                    local checkResult = BuyMelee(melee.key, true)  -- Step 1: check (proxy writes to J if valid)
                     task.wait(0.3)
-                    BuyMelee(melee.key)                            -- Bước 2: mua thật (kích hoạt proxy auto-navigate + invoke thật)
+                    BuyMelee(melee.key)                            -- Step 2: actual buy (triggers proxy auto-navigate + actual invoke)
                     task.wait(0.5)
                     if CheckItem(melee.name) then
-                        SetTask('MainTask', 'Auto Full Melee | ✅ Mua thành công ' .. melee.name)
+                        SetTask('MainTask', 'Auto Full Melee | ✅ Successfully bought ' .. melee.name)
                     else
-                        SetTask('SubTask', 'Auto Full Melee | Đã gửi lệnh mua ' .. melee.name .. ' — kiểm tra lại vòng sau')
+                        SetTask('SubTask', 'Auto Full Melee | Buy command sent ' .. melee.name .. ' — check again next cycle')
                     end
                 else
-                    -- [FIXED] Không còn set _G.Level=true (khóa vĩnh viễn) —
-                    -- chỉ báo trạng thái rồi return, Refresh sẽ tự thử lại
-                    -- vòng sau khi tiền/Fragments đủ (RaidController vẫn
-                    -- chạy song song farm Fragments qua TasksOrder bình thường)
-                    -- Đúng yêu cầu boss man: "chạy lại mua tới chừng nào mua được"
-                    SetTask('MainTask', 'Auto Full Melee | Cần farm tiền cho ' .. melee.name)
+                    -- [FIXED] No longer setting _G.Level=true (permanent lock) —
+                    -- only reports status then returns, Refresh will automatically retry
+                    -- next cycle when money/Fragments are sufficient (RaidController still
+                    -- runs in parallel farming Fragments via TasksOrder normally)
+                    -- Per boss man's request: "keep retrying buy until successful"
+                    SetTask('MainTask', 'Auto Full Melee | Need to farm money for' .. melee.name)
                     return
                 end
             else
-                -- [FIXED] Mastery đọc từ ScriptStorage.Melees[name] — đây mới
-                -- là nguồn thật (xem dòng ~403). "bp.Level.Value" cũ KHÔNG
-                -- TỒN TẠI trên tool, khiến toàn bộ check mastery bị bỏ qua
-                -- lặng lẽ (bp:FindFirstChild("Level") luôn nil → điều kiện
-                -- luôn false) — đây là lý do auto melee tưởng đã "sẵn sàng"
-                -- dù mastery còn thấp.
+                -- [FIXED] Mastery reads from ScriptStorage.Melees[name] — this is
+                -- the actual source (see line ~403). The old "bp.Level.Value"
+                -- DOES NOT EXIST on the tool, causing all mastery checks to be silently
+                -- skipped (bp:FindFirstChild("Level") is always nil → condition
+                -- is always false) — this is why auto melee thought it was "ready"
+                -- even when mastery was low.
                 local mastery = ScriptStorage.Melees[melee.name] or 0
 
                 if melee.levelReq and ScriptStorage.PlayerData.Level < melee.levelReq then
-                    SetTask('MainTask', 'Auto Full Melee | Cần Player Level ' .. melee.levelReq .. ' cho ' .. melee.name)
+                    SetTask('MainTask', 'Auto Full Melee | Player Level Required ' .. melee.levelReq .. ' cho ' .. melee.name)
                     return
                 end
 
-                -- [NEW] V1 đạt 500 mastery + chưa có V2 tương ứng → ưu tiên
-                -- Raid lấy Fragments (yêu cầu boss man: "nếu đc 500 mastery
-                -- thì đi raid để có F mua võ v2"). Đạt rồi thì KHÔNG return
-                -- cứng — để vòng lặp tiếp tục xử lý các melee còn lại ("kiểm
-                -- tra nếu đủ điều kiện mastery thì mua melee khác").
+                -- [NEW] V1 reaches 500 mastery + no corresponding V2 yet → priority
+                -- Raid for Fragments (boss man request: "if 500 mastery is reached
+                -- then go raid to get F to buy v2 fighting style"). Once reached, do NOT return
+                -- hard — so the loop continues processing remaining melees ("check
+                -- if mastery conditions are met then buy other melee").
                 local v2Name = V1ToV2[melee.name]
                 if Config.Melee.CheckMasteryAfterBuy and v2Name and not CheckItem(v2Name) then
                     if mastery < Config.Melee.RaidAtV1Mastery then
-                        SetTask('SubTask', melee.name .. ' đang train mastery (' .. mastery .. '/' .. Config.Melee.RaidAtV1Mastery .. ')')
+                        SetTask('SubTask', melee.name .. ' training mastery (' .. mastery .. '/' .. Config.Melee.RaidAtV1Mastery .. ')')
                     else
                         local v2Data = MeleePrices[v2Name]
                         local needFrags = (v2Data and v2Data.Price and v2Data.Price.Fragments) or 5000
@@ -2633,42 +2666,42 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                         local haveBeli  = ScriptStorage.PlayerData.Beli or 0
                         if haveFrags < needFrags or haveBeli < needBeli then
                             SetTask('MainTask', string.format(
-                                'Auto Full Melee | %s đạt %d mastery — chờ Raid farm Fragments cho %s (F:%d/%d, Beli:%d/%d)',
+                                'Auto Full Melee | %s reached %d mastery — waiting for Raid to farm Fragments for %s (F:%d/%d, Beli:%d/%d)',
                                 melee.name, mastery, v2Name, haveFrags, needFrags, haveBeli, needBeli
                             ))
                         end
                     end
                 end
 
-                -- [NEW] V2 đạt 400 mastery → điều kiện Godhuman coi như đạt
-                -- cho MELEE NÀY (còn đủ điều kiện TỔNG THỂ hay chưa thì
-                -- AllMeleesReady() ở nhánh needMaterials phía trên quyết định)
+                -- [NEW] V2 reached 400 mastery → Godhuman condition considered met
+                -- for THIS MELEE (whether overall conditions are met or not is
+                -- decided by AllMeleesReady() in the needMaterials branch above)
                 local V2_TO_GODHUMAN = {["Death Step"]=true, ["Sharkman Karate"]=true, ["Electric Claw"]=true, ["Dragon Talon"]=true}
                 if Config.Melee.CheckMasteryAfterBuy and V2_TO_GODHUMAN[melee.name] and not CheckItem("Godhuman") then
                     if mastery < Config.Melee.GodhumanAtV2Mastery then
-                        SetTask('SubTask', melee.name .. ' đang train mastery (' .. mastery .. '/' .. Config.Melee.GodhumanAtV2Mastery .. ')')
+                        SetTask('SubTask', melee.name .. ' training mastery (' .. mastery .. '/' .. Config.Melee.GodhumanAtV2Mastery .. ')')
                     end
                 end
 
-                SetTask('SubTask', '✅ ' .. melee.name .. ' đã sẵn sàng')
+                SetTask('SubTask', '✅ ' .. melee.name .. ' ready')
             end
         end
 
-        SetTask('MainTask', 'Auto Full Melee | 🎉 Hoàn thành tất cả!')
+        SetTask('MainTask', 'Auto Full Melee | 🎉 All completed!')
     end)
 
     -- ============================================================
-    -- LEVEL FARM - HOÀN CHỈNH
+    -- LEVEL FARM - COMPLETE
     -- ============================================================
-    -- [ADDED - theo yêu cầu boss man: "sửa hệ thống farm lv... từ file
-    -- message 10"] QuestController — theo dõi quest bằng REMOTE EVENT thật
-    -- (Remotes.QuestUpdate) thay vì GetCurrentClaimQuest() (đọc GUI text
-    -- PlayerGui.Main.Quest.Container.QuestTitle.Title.Text). Đọc GUI text
-    -- có độ trễ replication thật — bắn StartQuest xong, đọc lại GUI ngay
-    -- frame kế có thể vẫn thấy tên quest CŨ, khiến so sánh "CurrentClaim
-    -- Quest1 ~= Q.NameMon" sai và gọi AbandonQuest ngay quest vừa nhận.
-    -- Remotes.QuestUpdate:OnClientEvent bắn THẲNG từ server mỗi khi quest
-    -- state đổi — không polling, không trễ.
+    -- [ADDED - per boss man request: "fix lv farm system... from file
+    -- message 10"] QuestController — track quests using actual REMOTE EVENT
+    -- (Remotes.QuestUpdate) instead of GetCurrentClaimQuest() (reading GUI text
+    -- PlayerGui.Main.Quest.Container.QuestTitle.Title.Text). Reading GUI text
+    -- has real replication lag — after firing StartQuest, reading the GUI in the
+    -- next frame might still show the OLD quest name, causing the comparison "CurrentClaim
+    -- Quest1 ~= Q.NameMon" to be wrong and calling AbandonQuest immediately after receiving a quest.
+    -- Remotes.QuestUpdate:OnClientEvent fires DIRECTLY from the server whenever the quest
+    -- state changes — no polling, no lag.
     QuestController = {
         CurrentQuest = "",
         CurrentQuestName = "",
@@ -2695,12 +2728,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             QuestController:Reset()
         end)
     end)
-    -- [FIXED] QuestController.CurrentQuestName là tên QUEST (vd
-    -- "BanditQuest1"), KHÁC với GetCurrentClaimQuest() (tên MOB đọc từ GUI
-    -- text) — 2 thứ không so sánh chéo được. HasActiveQuest()/GetActive
-    -- QuestName() tách riêng, và nếu không kết nối được Remotes.QuestUpdate
-    -- thì trả về nil để Start() tự rơi về GetCurrentClaimQuest() (so mob
-    -- name như cũ) — không trộn lẫn 2 loại tên.
+    -- [FIXED] QuestController.CurrentQuestName is the QUEST name (e.g.
+    -- "BanditQuest1"), DIFFERENT from GetCurrentClaimQuest() (MOB name read from GUI
+    -- text) — these 2 things cannot be cross-compared. HasActiveQuest()/GetActive
+    -- QuestName() are separate, and if Remotes.QuestUpdate cannot be connected
+    -- it returns nil so Start() falls back to GetCurrentClaimQuest() (comparing mob
+    -- name as before) — not mixing the 2 types of names.
     function HasActiveQuestEvent()
         return questConnectOk and QuestController.QuestConnection ~= nil
     end
@@ -2711,15 +2744,15 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
 
     local function ManualLevelLookup()
-        -- [ADDED - theo yêu cầu boss man] Bảng farm-lv THỦ CÔNG, KHÔNG phụ
-        -- thuộc J.RefreshQuest/require(Quests) (chuỗi đang gãy — J.RefreshQuest
-        -- match ScriptStorage.PlayerData.Level với LevelReq trong Quests module,
-        -- lỡ không khớp thì "h" ở đó ra nil rồi crash ngay dòng kế — đúng kiểu
-        -- "request data lv" mà farm theo không chạy nữa). Bảng này CHỈ đọc
-        -- ScriptStorage.PlayerData.Level (property thường, không qua request/
-        -- module-matching gì cả) rồi tra thẳng mob+CFrame, y hệt cách vantablack/
-        -- Maru Premium làm — dữ liệu lấy nguyên từ file tham chiếu thật đã verify
-        -- (toạ độ CFrame chính xác từng đảo, không đoán).
+        -- [ADDED - per boss man request] MANUAL level-farm table, NOT dependent
+        -- on J.RefreshQuest/require(Quests) (the chain is broken — J.RefreshQuest
+        -- matches ScriptStorage.PlayerData.Level with LevelReq in Quests module,
+        -- if they don't match then "h" there becomes nil and crashes on the next line — typical
+        -- "request data lv" where the farm no longer runs). This table ONLY reads
+        -- ScriptStorage.PlayerData.Level (normal property, no request/
+        -- module-matching) then looks up mob+CFrame directly, exactly how vantablack/
+        -- Maru Premium does — data taken from a real verified reference file
+        -- (CFrame coordinates precise for each island, no guessing).
         local MyLevel = ScriptStorage.PlayerData.Level or 0
         local Mon, Qdata, Qname, NameMon = "", 0, "", ""
         local PosQ, PosM = nil, nil
@@ -3098,11 +3131,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
 
     -- ══════════════════════════════════════════════════════════════════
-    -- [ADDED từ message_10] AUTO STORE FRUIT — tự lưu trái cây từ
-    -- Backpack/Character vào inventory (StoreFruit) mỗi 1s.
-    -- Dùng ScriptStorage.IgnoreStoreFruits để tránh lưu trùng trái
-    -- đang được dùng bởi AutoRandomFruit / AutoRaidIce.
-    -- Không dùng checkItem() (message_10 only) → dùng table.find trực tiếp.
+    -- [ADDED from message_10] AUTO STORE FRUIT — automatically saves
+    -- Backpack/Character enters inventory (StoreFruit) every 1s.
+    -- Use ScriptStorage.IgnoreStoreFruits to avoid duplicate saving of fruits
+    -- being used by AutoRandomFruit / AutoRaidIce.
+    -- Do not use checkItem() (message_10 only) → use table.find directly.
     -- ══════════════════════════════════════════════════════════════════
     task.spawn(function()
         while true do
@@ -3113,7 +3146,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                         for _, v in next, container:GetChildren() do
                             if v.Name:find("Fruit") and v:IsA("Tool") then
                                 local ori = v:GetAttribute("OriginalName") or v.Name
-                                -- Bỏ qua nếu đang bị IgnoreStoreFruits hold
+                                -- Skip if currently held by IgnoreStoreFruits
                                 if not table.find(ScriptStorage.IgnoreStoreFruits, v.Name)
                                 and not table.find(ScriptStorage.IgnoreStoreFruits, ori) then
                                     table.insert(gg, {tool = v, ori = ori})
@@ -3144,7 +3177,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     end
                 end
             end)
-            -- Cousin DLCBoxData ping (từ message_10 — giữ như gốc)
+            -- Cousin DLCBoxData ping (from message_10 — keep as original)
             pcall(function()
                 Remotes.CommF_:InvokeServer("Cousin", "DLCBoxData")
             end)
@@ -3152,12 +3185,12 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
     end)
 
-    -- [ADDED] AUTO RANDOM FRUIT — tự đổi ngẫu nhiên giữa các trái ÁC QUỶ
-    -- đang sở hữu trong túi đồ. Dùng getInventoryFruits (lấy danh sách trái
-    -- đang có) + LoadFruit (trang bị) — cả 2 remote này đã CÓ THẬT và được
-    -- dùng sẵn ở AutoRaidIce.GetCheapestFruit/BuyChip trong chính file này,
-    -- không phải tự chế. Đọc Config.Items.AutoRandomFruit (đúng convention
-    -- của file — mọi feature khác đều đọc thẳng Config.Items.X, không qua
+    -- [ADDED] AUTO RANDOM FRUIT — automatically switch randomly between DEVIL FRUITS
+    -- currently owned in inventory. Use getInventoryFruits (get list of fruits
+    -- owned) + LoadFruit (equip) — both remotes actually EXIST and are
+    -- used in AutoRaidIce.GetCheapestFruit/BuyChip within this file,
+    -- not custom made. Read Config.Items.AutoRandomFruit (follows file
+    -- convention — all other features read directly from Config.Items.X, not through
     -- _G mirror).
     task.spawn(function()
         while task.wait(30) do
@@ -3182,18 +3215,18 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end)
 
     -- ══════════════════════════════════════════════════════════════════
-    -- [REPLACED per promt_fix_kaitun — PATCH #1] CheckDataLevel từ message(10)
-    -- ⚠️ CẢNH BÁO: kiến trúc ánh xạ CỨNG level→quái (lv<70→Shanda, lv<120→God's Guard)
-    -- KHÔNG check vị trí thật trên map — rủi ro đơ nếu vị trí không khớp.
-    -- Đây y chang kiểu đã được DynamicIsland gỡ trước đó. Port lại per boss man.
-    -- Ánh xạ: plr.Data.Level.Value → ScriptStorage.PlayerData.Level
+    -- [REPLACED per promt_fix_kaitun — PATCH #1] CheckDataLevel from message(10)
+    -- ⚠️ WARNING: hard-mapped level→mob architecture (lv<70→Shanda, lv<120→God's Guard)
+    -- DOES NOT check actual position on map — risk of freezing if position does not match.
+    -- This is exactly like what was removed by DynamicIsland before. Porting back per boss man.
+    -- Mapping: plr.Data.Level.Value → ScriptStorage.PlayerData.Level
     -- ══════════════════════════════════════════════════════════════════
     FunctionsHandler.LevelFarm:RegisterMethod("Refresh", function()
-        -- Guard chống xung đột AutoSea3/AutoSea2
+        -- Guard against AutoSea3/AutoSea2 conflict
         if _G.SeaTransitionActive then return nil end
 
         local lv = ScriptStorage.PlayerData.Level or 0
-        -- Ánh xạ y hệt message(10) CheckDataLevel()
+        -- Mapping identical to message(10) CheckDataLevel()
         if lv < 10 then
             return 1
         elseif lv < 70 then
@@ -3205,24 +3238,24 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
     end)
     -- ══════════════════════════════════════════════════════════════════
-    -- [REPLACED per promt_fix_kaitun — PATCH #2] Chuyển thể FarmLevelLogic
-    -- Ánh xạ Bước 2:
-    --   plr.Data.Level.Value   → ScriptStorage.PlayerData.Level
-    --   PLACE_ID.sea1/2/3()   → SeaIndex == 1/2/3
-    --   bringMob+equipWeapon+FastAttack → CombatController.Attack(name)
-    --   CheckMonster(name)    → không cần (đã có trong CombatController.Attack)
-    --   Teleport("sky 3/2")   → TweenController.Create trực tiếp (không requestEntrance)
+    -- [REPLACED per promt_fix_kaitun — PATCH #2] Adapt FarmLevelLogic
+    -- Mapping Step 2:
+    --  plr.Data.Level.Value   → ScriptStorage.PlayerData.Level
+    --  PLACE_ID.sea1/2/3()   → SeaIndex == 1/2/3
+    --  bringMob+equipWeapon+FastAttack → CombatController.Attack(name)
+    --  CheckMonster(name)    → not needed (already in CombatController.Attack)
+    --  Teleport("sky 3/2")   → TweenController.Create directly (no requestEntrance)
     --                           + TweenController.Create fallback
-    -- Giải pháp HYBRID (Cách 1): thêm check vị trí thật (CurrentLocation)
-    -- TRƯỚC khi TweenController.Create — vừa dùng logic message(10), vừa không đơ.
+    -- HYBRID solution (Method 1): add real position check (CurrentLocation)
+    -- BEFORE TweenController.Create — use message(10) logic and prevent freezing.
     -- ══════════════════════════════════════════════════════════════════
     FunctionsHandler.LevelFarm:RegisterMethod("Start", function(h)
         local currentLevel = ScriptStorage.PlayerData.Level or 0
 
-        -- Guard: đã lên đủ level sang Sea 2 → không farm Sea 1 nữa
+        -- Guard: reached enough level for Sea 2 → stop farming Sea 1
         if currentLevel >= 700 and SeaIndex == 1 then return end
 
-        -- ── Sea 3: farm Bones nếu cần (giữ nguyên bản DynamicIsland gốc)
+        -- ── Sea 3: farm Bones if needed (keep original DynamicIsland version)
         if SeaIndex == 3 then
             if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
                 if os.time() > (BonesCooldown or 0) then
@@ -3239,13 +3272,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
 
         -- ═══ h == 2: level 10–69 → farm Shanda @ Upper Skylands ═══════
-        -- Tương đương nhánh `levelData == 2` của message(10).txt
+        -- Equivalent to `levelData == 2` branch of message(10).txt
         -- Teleport("sky 3") → TweenController.Create Upper Skylands
         if h == 2 then
             if SeaIndex == 1 then
                 local loc = LocalPlayer:GetAttribute("CurrentLocation")
                 if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
-                    -- [FIXED] Bỏ requestEntrance, chỉ dùng tween
+                    -- [FIXED] Remove requestEntrance, use tween only
                     TweenController.Create(CFrame.new(-7894, 5547, -380))
                     task.wait(1)
                     return
@@ -3279,13 +3312,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
 
         -- ═══ h == 3: level 70–119 → farm God's Guard @ Skylands ══════
-        -- Tương đương nhánh `levelData == 3` của message(10).txt
+        -- Equivalent to `levelData == 3` branch of message(10).txt
         -- Teleport("sky 2") → TweenController.Create Skylands
         elseif h == 3 then
             if SeaIndex == 1 then
                 local loc = LocalPlayer:GetAttribute("CurrentLocation")
                 if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
-                    -- [FIXED] Bỏ requestEntrance, chỉ dùng tween
+                    -- [FIXED] Remove requestEntrance, use tween only
                     TweenController.Create(CFrame.new(-4650, 872, -1775))
                     task.wait(1.5)
                     return
@@ -3316,11 +3349,11 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 end
             end
 
-        -- ═══ h == 4 / h == 1: farm chung qua ManualLevelLookup ════════
+        -- ═══ h == 4 / h == 1: common farm via ManualLevelLookup ════════
         else
             local Q = ManualLevelLookup()
             if not Q then
-                Report("LevelFarm: ManualLevelLookup không tìm được mốc (lv="
+                Report("LevelFarm: ManualLevelLookup could not find milestone (lv="
                     .. tostring(currentLevel) .. ", sea=" .. tostring(SeaIndex) .. ")")
                 return
             end
@@ -3333,7 +3366,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 else
                     if not Q.PosQ then return end
                     TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-                    SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Nhận Quest")
+                    SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accept Quest")
                     if CaculateDistance(Q.PosQ) > 10 then return end
                     task.wait(0.5)
                     LevelFarmTTL = 0
@@ -3349,7 +3382,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 else
                     if not Q.PosQ then return end
                     TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-                    SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Nhận Quest")
+                    SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accept Quest")
                     if CaculateDistance(Q.PosQ) > 10 then return end
                     task.wait(0.5)
                     LevelFarmTTL = 0
@@ -3357,14 +3390,14 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     task.wait(0.3)
                 end
             end
-            -- CombatController.Attack tự làm: tìm quái + tween + đánh
-            -- (thay thế bringMob + equipWeapon + FastAttack + CheckMonster)
+            -- CombatController.Attack handles: find monster + tween + attack
+            -- (replace bringMob + equipWeapon + FastAttack + CheckMonster)
             CombatController.Attack(Q.Mon)
         end
     end)
 
     -- ============================================================
-    -- EQUIP WEAPON (TỪ TEST.TXT - ĐÃ CÓ SẴN TRONG CombatController.Attack)
+    -- EQUIP WEAPON (FROM TEST.TXT - ALREADY AVAILABLE IN CombatController.Attack)
     -- ============================================================
     FunctionsHandler.LocalPlayerController:RegisterMethod("EquipTool", function(h)
         if not Humanoid then return end
@@ -3389,7 +3422,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     print(3)
 
     -- ============================================================
-    -- SABER QUEST - HOÀN CHỈNH
+    -- SABER QUEST - COMPLETE
     -- ============================================================
     FunctionsHandler.Saber:RegisterMethod('Refresh', function()
         if not Config.Items.Saber then return end
@@ -3626,36 +3659,36 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end)
 
     -- ============================================================
-    -- [REBUILT] RACE AWAKENING (= "Race V3") — bị mất sạch RegisterMethod
-    -- trong 1 lượt sửa lớn trước đó (chỉ còn :Register() trơ), audit lại
-    -- toàn bộ file mới phát hiện. Xây lại từ data verified NatAov +
-    -- raw_6.txt + message_10.txt (nguồn MỚI NHẤT, verified nhất).
-    -- [FIXED - theo message_10] Thứ tự boss Human THẬT là Jeremy → Diamond
-    -- → Orbitus — bản trước tao để SAI thành Orbitus→Jeremy→Diamond. Có cả
-    -- toạ độ chờ thật cho từng bước. Dùng Wenlocktoad("1") LÀM STATE DRIVER
-    -- (đọc từ server mỗi lần) thay vì cờ nội bộ `_raceAwakenState.started`
-    -- dễ bị lệch nếu script restart giữa chừng.
-    -- [NEW - theo message_10] Thêm race Mink ("Rabbit" trong Race.Value):
-    -- farm 30 cái workspace.ChestModels rồi claim — hoàn toàn không có
-    -- trước đây.
-    -- Race Fishman: GIỮ NGUYÊN y hệt bản cũ theo đúng yêu cầu ("trừ tộc cá
-    -- fishman") — không đụng vào đoạn Sea Beast/skill hotbar bên dưới.
+    -- [REBUILT] RACE AWAKENING (= "Race V3") — all RegisterMethod were lost
+    -- in a previous major edit (only :Register() remained), auditing
+    -- the entire new file. Rebuilding from verified NatAov data +
+    -- raw_6.txt + message_10.txt (NEWEST, most verified source).
+    -- [FIXED - per message_10] Actual Human boss order is Jeremy → Diamond
+    -- → Orbitus — previous version was WRONGLY set as Orbitus→Jeremy→Diamond. Includes
+    -- actual wait coordinates for each step. Using Wenlocktoad("1") AS STATE DRIVER
+    -- (read from server each time) instead of internal flag `_raceAwakenState.started`
+    -- which is prone to desync if the script restarts mid-way.
+    -- [NEW - per message_10] Added Mink race ("Rabbit" in Race.Value): 2441 ||| -- farm 30 workspace.ChestModels then claim — completely non-existent 2442 ||| -- previously.
+    -- farm 30 workspace.ChestModels then claim — completely non-existent
+    -- previously.
+    -- Race Fishman: KEEP EXACTLY as old version per requirements ("except for fishman
+    -- race") — do not touch the Sea Beast/skill hotbar section below.
     -- ============================================================
     local _raceAwakenState = {
         humanStage = 0,  -- 0=Jeremy, 1=Diamond, 2=Orbitus, 3=claim
         minkChestsDone = 0,
     }
     local HUMAN_V3_WAIT_CF = {
-        [0] = CFrame.new(2333.209228515625, 449.2427062988281, 699.5128784179688),   -- chờ Jeremy
-        [1] = CFrame.new(-1713.5589599609375, 198.99554443359375, -104.31584167480469), -- chờ Diamond
-        [2] = CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375),     -- chờ Orbitus
+        [0] = CFrame.new(2333.209228515625, 449.2427062988281, 699.5128784179688),   -- waiting for Jeremy
+        [1] = CFrame.new(-1713.5589599609375, 198.99554443359375, -104.31584167480469), -- waiting for Diamond
+        [2] = CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375),     -- waiting for Orbitus
     }
     local HUMAN_V3_BOSS_NAME = {[0] = "Jeremy", [1] = "Diamond", [2] = "Orbitus"}
 
     local function _fightWorldBossV3(bossName, waitCF)
         local live = ScriptStorage.Enemies[bossName]
         if not live then
-            SetTask("SubTask", "Race Awakening | Chờ " .. bossName .. " — di chuyển tới điểm hẹn")
+            SetTask("SubTask", "Race Awakening | Waiting " .. bossName .. " — moving to meeting point")
             if waitCF then TweenController.Create(waitCF) end
             return false
         end
@@ -3677,7 +3710,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if not Config.Items.AutoRaceV3 then return nil end
         local data = LocalPlayer:FindFirstChild("Data")
         if not data or not data:FindFirstChild("Race") then return nil end
-        if data.Race:FindFirstChild("Evolved") then return nil end -- đã Awaken rồi
+        if data.Race:FindFirstChild("Evolved") then return nil end -- already Awakened
         local raceVal = data.Race.Value
         if raceVal ~= "Human" and raceVal ~= "Fishman" and raceVal ~= "Rabbit" then return nil end
         if (ScriptStorage.PlayerData.Level or 0) < 1400 then return nil end
@@ -3695,27 +3728,27 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if not data or not data:FindFirstChild("Race") then return end
         local race = data.Race.Value
 
-        -- [FIXED] Dùng Wenlocktoad("1") làm state driver thật, đọc lại mỗi
-        -- lần thay vì tin cờ nội bộ — khớp state-machine verified message_10
+        -- [FIXED] Using Wenlocktoad("1") as actual state driver, re-reading every
+        -- time instead of trusting internal flag — matches state-machine verified in message_10
         local check = Remotes.CommF_:InvokeServer("Wenlocktoad", "1")
 
         if check == 0 then
-            SetTask("MainTask", "Race Awakening | Bắt đầu quest (Wenlocktoad)")
+            SetTask("MainTask", "Race Awakening | Starting quest (Wenlocktoad)")
             Remotes.CommF_:InvokeServer("Wenlocktoad", "2")
             return
         elseif check == 2 then
-            SetTask("MainTask", "Race Awakening | Đủ điều kiện — claim!")
+            SetTask("MainTask", "Race Awakening | Requirements met — claiming!")
             Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
             return
         elseif check ~= 1 then
-            return -- giá trị lạ, chờ vòng sau
+            return -- strange value, wait for next loop
         end
 
-        -- check == 1: đang trong giai đoạn đánh boss/farm theo race
+        -- check == 1: currently in boss fight/farming phase based on race
         if race == "Human" then
             local stage = _raceAwakenState.humanStage
             if stage >= 3 then
-                SetTask("MainTask", "Race Awakening | Hoàn thành 3 boss — claim!")
+                SetTask("MainTask", "Race Awakening | 3 bosses completed — claiming!")
                 Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
                 _raceAwakenState.humanStage = 0
                 return
@@ -3727,14 +3760,14 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
 
         elseif race == "Rabbit" then
-            -- [NEW - Mink] Farm 30 ChestModels rồi claim
+            -- [NEW - Mink] Farm 30 ChestModels then claim
             local chestFolder = workspace:FindFirstChild("ChestModels")
             if not chestFolder then
-                SetTask("SubTask", "Race Awakening | Mink: không tìm thấy ChestModels")
+                SetTask("SubTask", "Race Awakening | Mink: ChestModels not found")
                 return
             end
             if _raceAwakenState.minkChestsDone >= 30 then
-                SetTask("MainTask", "Race Awakening | Mink: đủ 30 rương — claim!")
+                SetTask("MainTask", "Race Awakening | Mink: 30 chests reached — claiming!")
                 Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
                 return
             end
@@ -3742,21 +3775,21 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             local idx = _raceAwakenState.minkChestsDone + 1
             local chest = chests[idx]
             if chest and chest:FindFirstChild("WorldPivot") then
-                SetTask("MainTask", "Race Awakening | Mink: rương " .. idx .. "/30")
+                SetTask("MainTask", "Race Awakening | Mink: chest " .. idx .. "/30")
                 TweenController.Create(chest.WorldPivot.Position)
                 if CaculateDistance(chest.WorldPivot.Position) < 10 then
                     _raceAwakenState.minkChestsDone = _raceAwakenState.minkChestsDone + 1
                 end
             else
-                SetTask("SubTask", "Race Awakening | Mink: hết rương khả dụng (" .. #chests .. " tổng)")
+                SetTask("SubTask", "Race Awakening | Mink: no more available chests (" .. #chests .. " total)")
             end
 
         elseif race == "Fishman" then
-            -- (GIỮ NGUYÊN không đổi — theo đúng yêu cầu loại trừ Fishman)
+            -- (KEEP UNCHANGED — per exclusion request for Fishman)
             SetTask("MainTask", "Race Awakening | Fishman: farm Sea Beast")
             local seaBeasts = Services.Workspace:FindFirstChild("SeaBeasts")
             if not seaBeasts then
-                SetTask("SubTask", "⚠️ Không tìm thấy workspace.SeaBeasts — hop thử")
+                SetTask("SubTask", "⚠️ workspace.SeaBeasts not found — retrying")
                 Hop()
                 return
             end
@@ -3768,7 +3801,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 if h and hrp and h.Value > 0 then target = beast break end
             end
             if not target then
-                SetTask("SubTask", "Fishman | Chưa thấy Sea Beast, đợi spawn...")
+                SetTask("SubTask", "Fishman | Sea Beast not spotted, waiting for spawn...")
                 task.wait(3)
                 return
             end
@@ -3777,7 +3810,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 pcall(function()
                     FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Fishman Karate")
                 end)
-                SetTask("SubTask", "Fishman | Đang đánh Sea Beast (skill Z/X/C)")
+                SetTask("SubTask", "Fishman | Fighting Sea Beast (skill Z/X/C)")
                 pcall(function()
                     Services.VirtualInputManager:SendKeyEvent(true, "Z", false, game)
                     task.wait(0.3)
@@ -3791,34 +3824,34 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- BOSSES TASK
     -- ============================================================
     -- ============================================================
-    -- [FIXED] Xác nhận boss chết THẬT — tránh false-positive lúc chuyển
-    -- phase (bug boss man báo: đánh "Hải Tặc Đào Hoa" [Cake Prince] qua
-    -- phase 2, Parent/Humanoid tạm biến mất trong animation chuyển phase,
-    -- code cũ tưởng chết → reset nhầm, bỏ dở boss đang đánh dở).
-    -- Giờ: mất dấu / Health<=0 → CHỜ xác nhận liên tục 3 giây, nếu tên đó
-    -- xuất hiện sống lại (phase mới) trong lúc chờ thì huỷ reset, đánh tiếp.
+    -- [FIXED] Confirm ACTUAL boss death — avoid false-positives during phase transition
+    -- phase (boss man bug report: fighting "Hải Tặc Đào Hoa" (Peach Blossom Pirates) [Cake Prince] through
+    -- phase 2, Parent/Humanoid temporarily disappear during phase transition animation,
+    -- old code thought it died → reset incorrectly, interrupting boss fight).
+    -- Now: lost track / Health<=0 → WAIT for continuous confirmation for 3 seconds, if that name
+    -- respawn appearance (new phase) during wait cancels reset, continue fighting.
     -- ============================================================
     local function ConfirmBossDead(bossName)
-        -- [FIXED - bớt delay theo yêu cầu boss man] 3×1s (3.0s tổng) →
-        -- 6×0.3s (1.8s tổng). KHÔNG rút bằng cách giảm số lần check xuống —
-        -- làm vậy sẽ yếu lại đúng cái bug false-positive từng fix. Thay vào
-        -- đó tăng gấp đôi số lần poll (3→6) trong khi tổng thời gian NGẮN
-        -- hơn 40% — vừa nhanh hơn vừa bắt "sống lại giữa chừng" nhạy hơn.
+        -- [FIXED - reduced delay per boss man request] 3×1s (3.0s total) →
+        -- 6×0.3s (1.8s total). DO NOT shorten by reducing number of checks —
+        -- doing so would revive the false-positive bug previously fixed. Instead,
+        -- double the polling rate (3→6) while total time is SHORTER
+        -- by 40% — both faster and more sensitive to "mid-way revival".
         for _ = 1, 6 do
             task.wait(0.3)
             local stillThere = ScriptStorage.Enemies[bossName]
             if stillThere and stillThere:FindFirstChild("Humanoid") and stillThere.Humanoid.Health > 0 then
-                return false -- sống lại (chuyển phase) — KHÔNG phải chết thật
+                return false -- reviving (phase transition) — NOT actually dead
             end
         end
-        return true -- 1.8s liên tục không thấy sống lại — chắc chắn chết
+        return true -- 1.8s continuous absence of revival — definitely dead
     end
 
     FunctionsHandler.BossesTask:RegisterMethod("Refresh", function()
         local k
         for h, h in BossesOrder do
-            -- [FIXED] Thêm gate Config.BossWeapons — trước đây không có cách
-            -- nào tắt farm 1 boss cụ thể, giờ set Config.BossWeapons[name]=false là bỏ qua
+            -- [FIXED] Added Config.BossWeapons gate — previously no way
+            -- whoever turns off farm for a specific boss, now set Config.BossWeapons[name]=false to skip
             if Config.BossWeapons[h] ~= false then
                 local X = BossesOrderLevel[h]
                 if ScriptStorage.PlayerData.Level >= X then
@@ -3839,21 +3872,21 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             CombatController.Attack(tostring(k), null, null, function() SpecialItems = nil end)
             SpecialItems = nil
 
-            -- [ADDED] "Reset teleport về farm level tiếp" — boss man yêu cầu:
-            -- sau khi hạ xong, reset nhân vật (respawn) để đảm bảo LevelFarm
-            -- tiếp tục sạch sẽ thay vì có thể bị kẹt vị trí/trạng thái combat
+            -- [ADDED] "Reset teleport back to farm level" — boss man request:
+            -- after defeating, reset character (respawn) to ensure LevelFarm
+            -- continue cleanly instead of potentially being stuck in position/combat state
             pcall(function()
                 if k.Parent == nil or (k:FindFirstChild("Humanoid") and k.Humanoid.Health <= 0) then
-                    -- [FIXED] Xác nhận chết thật trước khi reset (tránh false-positive lúc chuyển phase)
+                    -- [FIXED] Confirm actual death before reset (avoid false-positive during phase transition)
                     if ConfirmBossDead(k.Name) then
-                        SetTask('SubTask', '✅ Đã hạ ' .. k.Name .. ' — reset về farm level')
+                        SetTask('SubTask', '✅ Defeated ' .. k.Name .. ' — resetting to farm level')
                         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                         if hum then
                             hum.Health = 0
                             LocalPlayer.CharacterAdded:Wait()
                         end
                     else
-                        SetTask('SubTask', k.Name .. ' đang chuyển phase — tiếp tục đánh')
+                        SetTask('SubTask', k.Name .. ' switching phase — continue fighting')
                     end
                 end
             end)
@@ -3866,16 +3899,16 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     FunctionsHandler.SpecialBossesTask:RegisterMethod('Refresh', function()
         local k
         for h, X in SpecialBossesOrder do
-            -- [FIXED] Cùng gate Config.BossWeapons như BossesTask
+            -- [FIXED] Same gate Config.BossWeapons as BossesTask
             if Config.BossWeapons[h] ~= false and ScriptStorage.PlayerData.Level >= X then
                 local X = ScriptStorage.Enemies[h]
                 if X and X:FindFirstChild('Humanoid') and X.Humanoid.Health > 0 then k = X end
             end
         end
-        -- [ADDED] Không thấy boss nào lên → farm Bones nhẹ nhàng ở nền
-        -- (fire-and-forget, KHÔNG return true nên LevelFarm vẫn chạy bình
-        -- thường) — Bones là nguyên liệu Fire Essence (Dragon Talon) VÀ
-        -- theo nat kaitun cũng liên quan tới tỉ lệ Soul Reaper xuất hiện
+        -- [ADDED] No boss spawned → gently farm Bones in the background
+        -- (fire-and-forget, DOES NOT return true so LevelFarm still runs
+        -- normally) — Bones are materials for Fire Essence (Dragon Talon) AND
+        -- according to nat kaitun also related to Soul Reaper spawn rate
         if not k then
             pcall(function()
                 local bonesCheck = Remotes.CommF_:InvokeServer("Bones", "Check")
@@ -3896,20 +3929,20 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             SetTask('SubTask', '👾 Special Boss: ' .. k.Name)
             CombatController.Attack(tostring(k))
 
-            -- [ADDED] Cùng logic reset như BossesTask — hạ xong Katakuri/
-            -- Core/Darkbeard thì reset về farm level bình thường
+            -- [ADDED] Same reset logic as BossesTask — after defeating Katakuri/
+            -- Core/Darkbeard then reset to farm level normally
             pcall(function()
                 if k.Parent == nil or (k:FindFirstChild("Humanoid") and k.Humanoid.Health <= 0) then
-                    -- [FIXED] Xác nhận chết thật trước khi reset (tránh false-positive lúc chuyển phase)
+                    -- [FIXED] Confirm actual death before reset (avoid false-positive during phase transition)
                     if ConfirmBossDead(k.Name) then
-                        SetTask('SubTask', '✅ Đã hạ ' .. k.Name .. ' — reset về farm level')
+                        SetTask('SubTask', '✅ Defeated ' .. k.Name .. ' — resetting to farm level')
                         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                         if hum then
                             hum.Health = 0
                             LocalPlayer.CharacterAdded:Wait()
                         end
                     else
-                        SetTask('SubTask', k.Name .. ' đang chuyển phase — tiếp tục đánh')
+                        SetTask('SubTask', k.Name .. ' switching phase — continue fighting')
                     end
                 end
             end)
@@ -3920,8 +3953,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- RAID CONTROLLER
     -- ============================================================
     -- ============================================================
-    -- [NEW] getInventoryFruits — đọc trực tiếp ItemConfig/FruitInfo,
-    -- không qua remote round-trip, có sẵn Rarity để lọc
+    -- [NEW] getInventoryFruits — read ItemConfig/FruitInfo directly,
+    -- no remote round-trip, Rarity available for filtering
     -- ============================================================
     local function getInventoryFruits()
         local fruits = {}
@@ -3942,9 +3975,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         return fruits
     end
 
-    -- [NEW] Chọn trái để bán/dùng mua chip: ưu tiên Common/Uncommon + giá
-    -- thấp nhất; nếu không có trái Common/Uncommon nào thì lấy trái rẻ
-    -- nhất trong kho bất kể rarity
+    -- [NEW] Choose fruit to sell/use for buying chips: prioritize Common/Uncommon +
+    -- lowest price; if no Common/Uncommon fruits, take the cheapest
+    -- fruit in inventory regardless of rarity
     local function PickFruitToSpend()
         local ok, fruits = pcall(getInventoryFruits)
         if not ok or not fruits or #fruits == 0 then return nil end
@@ -3963,28 +3996,29 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     -- ============================================================
     -- ============================================================
-    -- [NEW] SWORD BOSS TASK — farm boss lấy sword, 100% verified từ
-    -- file_kaitun_dự_phòng.lua (Configs["Sword"] + CheckBoss + "gi" check)
-    -- Có sẵn check inventory: đã có sword đó rồi thì bỏ qua, không đánh nữa
+    -- [NEW] SWORD BOSS TASK — farm boss to get sword, 100% verified from
+    -- file_kaitun_backup.lua (Configs["Sword"] + CheckBoss + "gi" check)
+    -- Inventory check available: if sword already owned, skip and stop fighting
     -- ============================================================
     local SwordBossList = {
         {sword = "Shark Saw",       boss = "The Saw",              sea = 1, level = 100},
-        {sword = "Wardens Sword",   boss = "Chief Warden",         sea = 1, level = 100},
-        {sword = "Pole (1st Form)", boss = "Thunder God",          sea = 1, level = 100},
+        -- [UPD30] Chief Warden REMOVED from game — remove entry (Wardens Sword awaiting
+        -- confirmation of new drop source, do not guess to avoid wrong boss farming).
+        {sword = "Pole (1st Form)", boss = "Lightning God",        sea = 1, level = 100},
         {sword = "Gravity Blade",   boss = "Orbitus",               sea = 2, level = 800},
         {sword = "Longsword",       boss = "Diamond",               sea = 2, level = 800},
         {sword = "Rengoku",         boss = "Awakened Ice Admiral",  sea = 2, level = 800},
         {sword = "Flail",           boss = "Smoke Admiral",         sea = 2, level = 0},
         {sword = "Twin Hooks",      boss = "Captain Elephant",      sea = 3, level = 0},
     }
-    -- Toạ độ dùng Hidden Key / Library Key mở khoá Rengoku (verified)
+    -- Coordinates used for Hidden Key / Library Key to unlock Rengoku (verified)
     local HIDDEN_KEY_CF  = CFrame.new(6572.29248, 295.712677, -6966.09961)
     local LIBRARY_KEY_CF = CFrame.new(6377.12549, 296.634735, -6843.76025)
 
     FunctionsHandler.SwordBossTask:RegisterMethod("Refresh", function()
         for _, sw in ipairs(SwordBossList) do
-            -- [NEW] Check inventory liên tục — có sword rồi thì bỏ qua
-            -- (đúng yêu cầu boss man: "check inventory ... nếu có ko đánh nữa")
+            -- [NEW] Continuously check inventory — skip if sword is already present
+            -- (per boss man's request: "check inventory ... if exists, stop fighting")
             if Config.Sword[sw.sword] and not CheckItem(sw.sword)
                 and SeaIndex == sw.sea and (ScriptStorage.PlayerData.Level or 0) >= sw.level then
                 local boss = ScriptStorage.Enemies[sw.boss]
@@ -3993,8 +4027,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 end
             end
         end
-        -- Riêng Rengoku: có thêm 2 đường phụ qua Hidden Key / Library Key
-        -- (không cần boss đang sống, chỉ cần đang cầm chìa + ở Sea 2)
+        -- Specifically for Rengoku: 2 additional paths via Hidden Key / Library Key
+        -- (boss doesn't need to be alive, just need to hold key + be in Sea 2)
         if Config.Sword["Rengoku"] and not CheckItem("Rengoku") and SeaIndex == 2 then
             if CheckItem("Hidden Key") or CheckItem("Library Key") then
                 return {sword = "Rengoku", useKey = true}
@@ -4009,7 +4043,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if sw.useKey then
             local keyName = CheckItem("Hidden Key") and "Hidden Key" or "Library Key"
             local cf = keyName == "Hidden Key" and HIDDEN_KEY_CF or LIBRARY_KEY_CF
-            SetTask("MainTask", "Sword Boss | Dùng " .. keyName .. " mở Rengoku")
+            SetTask("MainTask", "Sword Boss | Use " .. keyName .. " to open Rengoku")
             TweenController.Create(cf)
             if CaculateDistance(cf) <= 5 then
                 FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(keyName)
@@ -4020,44 +4054,44 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local boss = ScriptStorage.Enemies[sw.boss]
         if not boss then return end
 
-        SetTask("MainTask", "Sword Boss | Đánh " .. sw.boss .. " lấy " .. sw.sword)
+        SetTask("MainTask", "Sword Boss | Fight " .. sw.boss .. " to get " .. sw.sword)
         if boss:FindFirstChild("HumanoidRootPart") then
             TweenController.Create(boss.HumanoidRootPart.CFrame + Vector3.new(0, 30, 0))
         end
         CombatController.Attack(sw.boss)
 
-        -- [ADDED] Hạ xong → reset về farm level, giống pattern các boss khác
+        -- [ADDED] After defeat → reset to farm level, same as other bosses pattern
         pcall(function()
             if boss.Parent == nil or (boss:FindFirstChild("Humanoid") and boss.Humanoid.Health <= 0) then
                 if ConfirmBossDead(sw.boss) then
-                    SetTask('SubTask', '✅ Đã hạ ' .. sw.boss .. ' — reset về farm level')
+                    SetTask('SubTask', '✅ Defeated ' .. sw.boss .. ' — resetting to farm level')
                     local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                     if hum then
                         hum.Health = 0
                         LocalPlayer.CharacterAdded:Wait()
                     end
                 else
-                    SetTask('SubTask', sw.boss .. ' đang chuyển phase — tiếp tục đánh')
+                    SetTask('SubTask', sw.boss .. ' changing phase — continuing fight')
                 end
             end
         end)
     end)
 
 
-    -- Cake Prince [Lv. 2300] [Raid Boss] (Sea 3, đảo CakeLoaf)
-    -- [FIXED - theo spec mới] TRƯỚC ĐÂY dùng để farm Fragment (gate bởi
-    -- Fragments > 5000) — spec mới yêu cầu XOÁ HẲN mục đích đó, "chỉ dùng
-    -- raid để lấy Fragment". Cake Prince giờ CHỈ dùng để farm MASTERY cho
-    -- melee đang tập (V1 cần 500, V2 cần 400) — giết Cake Prince với vũ
-    -- khí đang tập cho mastery tăng nhanh hơn quái thường.
+    -- Cake Prince [Lv. 2300] [Raid Boss] (Sea 3, CakeLoaf island)
+    -- [FIXED - per new spec] PREVIOUSLY used to farm Fragment (gated by
+    -- Fragments > 5000) — new spec requires REMOVING that purpose, "only use
+    -- raid to get Fragment". Cake Prince is now ONLY for farming MASTERY for
+    -- current melee (V1 needs 500, V2 needs 400) — killing Cake Prince with
+    -- training weapon increases mastery faster than normal mobs.
     -- ============================================================
-    local CAKE_AREA_CF   = CFrame.new(-2077, 252, -12373)        -- đảo CakeLoaf nói chung
-    local CAKE_BOSS_CF   = CFrame.new(-2151.82, 149.32, -12404.91) -- chỗ Cake Prince xuất hiện
+    local CAKE_AREA_CF   = CFrame.new(-2077, 252, -12373)        -- CakeLoaf island in general
+    local CAKE_BOSS_CF   = CFrame.new(-2151.82, 149.32, -12404.91) -- Cake Prince spawn location
     local CAKE_UNLOCK_MOBS = {"Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker"}
 
-    -- [NEW] Xác định melee nào đang cần train mastery — dùng chung giữa
-    -- CakePrinceTask và MeleesController để đồng bộ (train đúng cái đang
-    -- thiếu, theo đúng thứ tự V1 → V2 spec yêu cầu)
+    -- [NEW] Determine which melee needs mastery training — shared between
+    -- CakePrinceTask and MeleesController for synchronization (train the one
+    -- currently lacking, following the V1 → V2 order required by spec)
     local MASTERY_TRAIN_ORDER = {
         {name = "Black Leg",       target = 500, tier = "V1"},
         {name = "Electro",         target = 500, tier = "V1"},
@@ -4085,8 +4119,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     FunctionsHandler.CakePrinceTask:RegisterMethod("Refresh", function()
         if SeaIndex ~= 3 then return nil end
         if (ScriptStorage.PlayerData.Level or 0) < 1500 then return nil end
-        -- [FIXED] Gate bằng "có melee nào đang cần train mastery không",
-        -- KHÔNG còn gate bằng Fragments nữa
+        -- [FIXED] Gated by "is there any melee needing mastery train",
+        -- NO longer gated by Fragments
         local trainingName = GetCurrentTrainingMelee()
         if not trainingName then return nil end
         return trainingName
@@ -4099,15 +4133,15 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             if m.name == trainingName then target = m.target break end
         end
 
-        -- [NEW] Check mastery mỗi vòng — đạt ngưỡng thì dừng farm, để
-        -- Refresh() vòng sau tự chuyển qua melee tiếp theo cần train
+        -- [NEW] Check mastery every loop — stop farming once threshold is reached,
+        -- so next Refresh() loop automatically switches to next melee needing training
         if mastery >= (target or 500) then
-            SetTask("SubTask", "✅ " .. trainingName .. " đạt " .. mastery .. " mastery — chuyển melee tiếp theo")
+            SetTask("SubTask", "✅ " .. trainingName .. " reached " .. mastery .. " mastery — switching to next melee")
             return
         end
 
-        -- [NEW] Trang bị đúng melee đang cần train trước khi đánh, để
-        -- damage tính mastery cho ĐÚNG vũ khí
+        -- [NEW] Equip the correct melee needing training before fighting, so
+        -- damage mastery is calculated for the CORRECT weapon
         pcall(function()
             FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(trainingName)
         end)
@@ -4116,9 +4150,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local bigMirror = cakeLoaf and cakeLoaf:FindFirstChild("BigMirror")
         local enemies   = workspace.Enemies
 
-        -- Chưa tới đảo Cake → tp tới trước
+        -- Not yet at Cake island → tp first
         if not cakeLoaf then
-            SetTask("MainTask", "Cake Mastery | " .. trainingName .. " (" .. mastery .. "/" .. (target or 500) .. ") — di chuyển tới đảo Cake")
+            SetTask("MainTask", "Cake Mastery | " .. trainingName .. " (" .. mastery .. "/" .. (target or 500) .. ") — moving to Cake island")
             TweenController.Create(CAKE_AREA_CF)
             return
         end
@@ -4127,28 +4161,28 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local bossUp     = enemies:FindFirstChild("Cake Prince")
 
         if mirrorOpen or bossUp then
-            -- Gương đã mở HOẶC boss đã lên → đánh (mastery tăng nhanh)
+            -- Mirror opened OR boss spawned → fight (mastery increases fast)
             local boss = enemies:FindFirstChild("Cake Prince")
             if boss and boss:FindFirstChild("Humanoid") and boss.Humanoid.Health > 0 then
                 SetTask("MainTask", "Cake Mastery | " .. trainingName .. " (" .. mastery .. "/" .. (target or 500) .. ") | Cake Prince HP " .. math.floor(boss.Humanoid.Health / boss.Humanoid.MaxHealth * 100) .. "%")
                 TweenController.Create(boss.HumanoidRootPart.CFrame + Vector3.new(0, 30, 0))
                 CombatController.Attack("Cake Prince")
 
-                -- [ADDED] Hạ xong → reset về farm bình thường, giống pattern
-                -- BossesTask/SpecialBossesTask đã làm trước đó
+                -- [ADDED] After defeat → reset to normal farming, same as pattern
+                -- in BossesTask/SpecialBossesTask done previously
                 pcall(function()
                     if boss.Parent == nil or boss.Humanoid.Health <= 0 then
-                        -- [FIXED] Đây chính xác là case boss man báo — Cake Prince
-                        -- ("Hải Tặc Đào Hoa") chuyển phase 2, code cũ tưởng chết
+                        -- [FIXED] This is exactly the case boss man reported — Cake Prince
+                        -- ("Flirty Pirate") transitions to phase 2, old code thought he was dead
                         if ConfirmBossDead("Cake Prince") then
-                            SetTask('SubTask', '✅ Đã hạ Cake Prince — reset về farm level')
+                            SetTask('SubTask', '✅ Cake Prince defeated — resetting to farm level')
                             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                             if hum then
                                 hum.Health = 0
                                 LocalPlayer.CharacterAdded:Wait()
                             end
                         else
-                            SetTask('SubTask', 'Cake Prince đang chuyển phase — tiếp tục đánh')
+                            SetTask('SubTask', 'Cake Prince is changing phase — continuing fight')
                         end
                     end
                 end)
@@ -4158,22 +4192,22 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             return
         end
 
-        -- Gương chưa mở, boss chưa lên → farm quái thường lấy mastery +
-        -- check tiến độ mở khoá (đủ thì tự trigger spawn Cake Prince)
-        SetTask("MainTask", "Cake Mastery | " .. trainingName .. " (" .. mastery .. "/" .. (target or 500) .. ") — farm quái thường")
+        -- Mirror not open, boss not spawned → farm normal mobs for mastery +
+        -- check unlock progress (auto-trigger Cake Prince spawn when enough)
+        SetTask("MainTask", "Cake Mastery | " .. trainingName .. " (" .. mastery .. "/" .. (target or 500) .. ") — farming normal mobs")
         local killedStr = Remotes.CommF_:InvokeServer("CakePrinceSpawner")
         local killed = killedStr and tonumber(tostring(killedStr):match("%d+")) or 0
         local remaining = math.max(0, 500 - killed)
 
         if remaining <= 0 then
-            SetTask("MainTask", "Cake Mastery | Đủ điều kiện — đang triệu hồi Cake Prince")
+            SetTask("MainTask", "Cake Mastery | Requirements met — summoning Cake Prince")
             Remotes.CommF_:InvokeServer("CakePrinceSpawner", true)
             task.wait(1)
             return
         end
 
-        -- Chưa đủ → farm quái mở khoá
-        SetTask("MainTask", "Cake Prince | Farm quái mở khoá — còn " .. remaining .. "/500")
+        -- Not enough → farm mobs to unlock
+        SetTask("MainTask", "Cake Prince | Farming mobs to" .. remaining .. "/500")
         local mob = nil
         for _, mobName in ipairs(CAKE_UNLOCK_MOBS) do
             local m = enemies:FindFirstChild(mobName)
@@ -4199,17 +4233,17 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end)
 
     FunctionsHandler.RaidController:RegisterMethod('GetRaidableFruit', function()
-        -- [FIXED] Trước đây lấy trái ĐẦU TIÊN tìm thấy dưới 1tr Beli, không
-        -- quan tâm rarity — dễ lỡ tay bán nhầm trái đắt/hiếm nếu nó đứng
-        -- trước trong Backpack. Giờ dùng PickFruitToSpend(): ưu tiên
-        -- Common/Uncommon + rẻ nhất, fallback rẻ nhất toàn kho nếu không có.
+        -- [FIXED] Previously took FIRST fruit found under 1m Beli, regardless of
+        -- rarity — easy to accidentally sell expensive/rare fruit if it was
+        -- first in Backpack. Now using PickFruitToSpend(): prioritize
+        -- Common/Uncommon + cheapest, fallback to cheapest in inventory if none.
         local picked = PickFruitToSpend()
         if picked then
             for k, k in ScriptStorage.Backpack do
                 if k.Name == picked.Name then return k end
             end
         end
-        -- fallback về logic cũ nếu getInventoryFruits() lỗi vì lý do gì đó
+        -- fallback to old logic if getInventoryFruits() fails for any reason
         for k, k in ScriptStorage.Backpack do
             if string.find(FruitIdToName(k.Name), " Fruit") then
                 if k.Value and k.Value < 1000000 then return k end
@@ -4334,15 +4368,15 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     -- ============================================================
     local RAID_ICE_CHIP_COOLDOWN = 2 * 60 * 60
 
-    -- [NEW] 2 helper lấy từ Moonlight_New_Public_source.lua (chỉ lấy LOGIC,
-    -- bỏ hết toggle/UI của nó) — dùng để làm AutoRaidIce đáng tin cậy hơn:
-    -- 1. TriggerInteractive: bấm nút raid summon bằng CẢ ProximityPrompt
-    --    LẪN ClickDetector (tìm đệ quy) — code cũ chỉ cứng path ClickDetector
-    --    1 chỗ, nếu game đổi qua ProximityPrompt thì "Khong tim thay button"
-    --    dù nút vẫn ở đó.
-    -- 2. RaidTimerActive: check trực tiếp PlayerGui.Main.TopHUDList.RaidTimer
-    --    .Visible — biết NGAY raid đã bắt đầu hay chưa, không cần đợi
-    --    notification 'go!'/'raid' bắn ra (vẫn giữ 2 cái đó làm dự phòng).
+    -- [NEW] 2 helpers from Moonlight_New_Public_source.lua (only taking LOGIC,
+    -- removing all toggles/UI) — used to make AutoRaidIce more reliable:
+    -- 1. TriggerInteractive: press raid summon button using BOTH ProximityPrompt
+    --   AND ClickDetector (recursive search) — old code had a hardcoded ClickDetector
+    --   path, if game changed to ProximityPrompt it would say "Button not found"
+    --   even if the button was there.
+    -- 2. RaidTimerActive: check PlayerGui.Main.TopHUDList.RaidTimer
+    --   .Visible directly — know IMMEDIATELY if raid started, no need to wait for
+    --   'go!'/'raid' notification (still keeping those two as backup).
     local function TriggerInteractive(object)
         if not object then return false end
         local prompt = object:FindFirstChildWhichIsA("ProximityPrompt", true)
@@ -4451,7 +4485,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
             return false
         end
-        SetTask('MainTask', 'Auto Raid Ice | Khong du tai nguyen mua chip')
+        SetTask('MainTask', 'Auto Raid Ice | Not enough resources to buy chip')
         return false
     end)
 
@@ -4516,14 +4550,14 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if not mapName then return end
         local mapObj = ScriptStorage.Map[mapName]
         if not mapObj then
-            Report('[AutoRaidIce] Khong tim thay Map: ' .. mapName)
+            Report('[AutoRaidIce] Map not found: ' .. mapName)
             return
         end
         local summonCFrame
         if SeaIndex == 2 then summonCFrame = CFrame.new(-6438.73, 250.64, -4501.50)
         elseif SeaIndex == 3 then summonCFrame = CFrame.new(-5097.93, 316.44, -3142.66) end
         if summonCFrame then
-            SetTask('MainTask', 'Raid Ice | Di den summon button')
+            SetTask('MainTask', 'Raid Ice | Moving to summon button')
             TweenController.Create(summonCFrame)
             local t0 = tick()
             repeat task.wait(0.3) until CaculateDistance(summonCFrame) < 25 or tick()-t0 > 20
@@ -4540,19 +4574,19 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         for retry = 1, 3 do
             if retry > 1 then task.wait(3) end
             pcall(function()
-                -- [FIXED] Dùng TriggerInteractive thay vì chỉ fireclickdetector
-                -- cứng 1 path — bắt được cả ProximityPrompt lẫn ClickDetector
+                -- [FIXED] Use TriggerInteractive instead of just fireclickdetector
+                -- with a hardcoded path — catches both ProximityPrompt and ClickDetector
                 if summonObj and TriggerInteractive(summonObj) then
                     clickSuccess = true
                     SetTask('MainTask', 'Raid Ice | Da click start (lan ' .. retry .. ')')
                 else
-                    SetTask('MainTask', 'Raid Ice | Khong tim thay button (lan ' .. retry .. ')')
+                    SetTask('MainTask', 'Raid Ice | Button not found (attempt ' .. retry .. ')')
                 end
             end)
             if clickSuccess then break end
         end
         if not clickSuccess then
-            SetTask('MainTask', 'Raid Ice | Khong the click start')
+            SetTask('MainTask', 'Raid Ice | Unable to click start')
             return
         end
         SetTask('MainTask', 'Raid Ice | Cho raid bat dau...')
@@ -4579,8 +4613,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             LastRaidAlert = 0
             SetTask('MainTask', 'Raid Ice | Raid bat dau!')
         else
-            Report('[AutoRaidIce] Raid khong bat dau')
-            SetTask('MainTask', 'Raid Ice | Raid khong bat dau, thu lai sau...')
+            Report('[AutoRaidIce] Raid did not start')
+            SetTask('MainTask', 'Raid Ice | Raid did not start, retrying in...')
         end
     end)
 
@@ -4808,10 +4842,10 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             until CaculateDistance(Vector3.new(0, 0, 0)) > 20000
             task.spawn(function()
                 alert("1098", "rejoin")
-                -- [FIXED - bớt delay theo yêu cầu boss man] 30s → 15s. Vẫn
-                -- giữ đủ thời gian cho server đăng ký state trước khi rejoin
-                -- ép buộc, chỉ rút phân nửa thay vì bỏ hẳn (bỏ hẳn dễ rejoin
-                -- lúc server chưa kịp lưu progress ZQuest).
+                -- [FIXED - reduced delay per boss man's request] 30s → 15s. Still
+                -- keeping enough time for the server to register state before rejoining
+                -- forced, only cutting in half instead of removing entirely (removing entirely makes it easy to rejoin
+                -- while the server hasn't saved ZQuest progress yet).
                 task.wait(15)
                 game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", game.JobId)
             end)
@@ -4863,9 +4897,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end)
 
     -- ============================================================
-    -- SOUL GUITAR - SỬA LOGIC TỪ HI.LUA + AUTO CHEST (MỚI)
+    -- SOUL GUITAR - FIXED LOGIC FROM HI.LUA + AUTO CHEST (NEW)
     -- ============================================================
-    -- ========== HÀM HỖ TRỢ ==========
+    -- ========== HELPER FUNCTIONS ==========
     local _SgSpecialItems = {
         "God's Chalice", "Fist of Darkness", "Sweet Chalice",
         "Hallow Essence", "Mirror Fractal"
@@ -4912,9 +4946,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 if v:IsA("BasePart") then v.CanCollide = false end
             end
             local targetCF = chest.CFrame + Vector3.new(0, 3, 0)
-            -- [FIXED - theo yêu cầu boss man: "bỏ bypass teleport"] Bỏ nhánh
-            -- BypassTP cho rương xa (>3000 stud) — luôn dùng
-            -- TweenController.Create bình thường, không đổi spawn point nữa.
+            -- [FIXED - per boss man's request: "remove bypass teleport"] Removed
+            -- BypassTP for far chests (>3000 studs) — always use
+            -- TweenController.Create normally, no longer changing spawn point.
             TweenController.Create(targetCF)
             task.wait(0.35)
             if firetouchinterest then
@@ -4929,7 +4963,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     local _SgVisited = {}
 
     local function _SgHopServer()
-        SetTask("MainTask", "🎸 Soul Guitar | Hop: Đang tìm server...")
+        SetTask("MainTask", "🎸 Soul Guitar | Hop: Searching for server...")
         local ok, servers = pcall(GetServers)
         if ok and servers then
             local list = {}
@@ -4941,13 +4975,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             table.sort(list, function(a, b) return a.players < b.players end)
             if list[1] then
                 _SgVisited[list[1].id] = true
-                SetTask("SubTask", "🎸 Hop → " .. list[1].id:sub(1,8) .. "... (" .. list[1].players .. " players)")
+                SetTask("SubTask", "🎸 Hop →" .. list[1].id:sub(1,8) .. "... (" .. list[1].players .. " players)")
                 pcall(function()
                     game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", list[1].id)
                 end)
-                -- [FIXED - bớt delay theo yêu cầu boss man] 8s → 4s. Teleport
-                -- server thường tự cắt kết nối client trong vài giây, 4s vẫn
-                -- đủ để không chạy tiếp code khi lệnh teleport chưa kịp ăn.
+                -- [FIXED - reduced delay per boss man's request] 8s → 4s. Teleport
+                -- server usually cuts client connection within a few seconds, 4s is still
+                -- enough to prevent code from continuing before the teleport command takes effect.
                 task.wait(4)
                 _SgChestPhaseDone = false
                 return
@@ -4967,29 +5001,29 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     pcall(function()
                         game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", sv.id)
                     end)
-                    -- [FIXED - bớt delay theo yêu cầu boss man] 8s → 4s (giống nhánh hop ở trên)
+                    -- [FIXED - reduced delay per boss man's request] 8s → 4s (same as hop branch above)
                     task.wait(4)
                     _SgChestPhaseDone = false
                     return
                 end
             end
         end)
-        SetTask("MainTask", "🎸 Soul Guitar | Hop: Không tìm được server, thử lại...")
-        -- [FIXED - bớt delay theo yêu cầu boss man] retry backoff 5s → 2s
+        SetTask("MainTask", "🎸 Soul Guitar | Hop: Server not found, retrying...")
+        -- [FIXED - reduced delay per boss man's request] retry backoff 5s → 2s
         task.wait(2)
     end
 
     local function _SgRunChestBatch()
         local hasItem, itemName = _SgHasSpecialItem()
         if hasItem then
-            SetTask("MainTask", "🎸 Auto Chest: Found " .. itemName .. " — dừng")
+            SetTask("MainTask", "🎸 Auto Chest: Found " .. itemName .. " — stop")
             return false
         end
         if ScriptStorage.Backpack["Skull Guitar"] then
             return false
         end
         local chests = _SgGetChests()
-        SetTask("SubTask", "🎸 Auto Chest: " .. #chests .. " rương còn lại")
+        SetTask("SubTask", "🎸 Auto Chest: " .. #chests .. " remaining chests")
         if #chests == 0 then
             return false
         end
@@ -5009,7 +5043,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         return #_SgGetChests() > 0
     end
 
-    -- ========== LOGIC CHÍNH ==========
+    -- ========== MAIN LOGIC ==========
     FunctionsHandler.SoulGuitar:RegisterMethod("Refresh", function()
         if not Config.Items.SoulGuitar then return end
         if ScriptStorage.Backpack['Skull Guitar'] then return end
@@ -5019,16 +5053,16 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         local bonesCount = (ScriptStorage.Backpack['Bones'] or {Count = 0}).Count or 0
         local frags = ScriptStorage.PlayerData.Fragments or 0
 
-        -- BƯỚC 1: Farm Ectoplasm đến 250 ở Sea 2
+        -- STEP 1: Farm Ectoplasm to 250 in Sea 2
         if ectoCount < 250 then
             _SgChestPhaseDone = false
             return 1
         end
 
-        -- BƯỚC 2: Nếu chưa có Dark Fragment → farm chest → summon Blackbeard → đánh
+        -- STEP 2: If no Dark Fragment → farm chest → summon Blackbeard → fight
         if not ScriptStorage.Backpack['Dark Fragment'] then
             if ScriptStorage.Backpack['Fist of Darkness'] then
-                return 10   -- summon & đánh Blackbeard
+                return 10   -- summon & fight Blackbeard
             end
             if not _SgChestPhaseDone then
                 local chests = _SgGetChests()
@@ -5036,7 +5070,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     return 9   -- auto chest
                 else
                     _SgChestPhaseDone = true
-                    SetTask("MainTask", "🎸 Soul Guitar | Hết rương, hop server để tìm Fist of Darkness")
+                    SetTask("MainTask", "🎸 Soul Guitar | Out of chests, hopping server to find Fist of Darkness")
                     task.spawn(_SgHopServer)
                     return
                 end
@@ -5046,7 +5080,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
         end
 
-        -- BƯỚC 3: Đã có Dark Fragment, chuyển sang puzzle ở Sea 3
+        -- STEP 3: Dark Fragment acquired, move to puzzle in Sea 3
         if SeaIndex ~= 3 then
             SetTask('MainTask', '🎸 Soul Guitar: Teleport to Sea 3')
             Remotes.CommF_:InvokeServer("TravelZou")
@@ -5074,7 +5108,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
     FunctionsHandler.SoulGuitar:RegisterMethod('Start', function(k)
         if k == 9 then
-            SetTask("MainTask", "🎸 Soul Guitar | Auto Chest: Nhặt rương...")
+            SetTask("MainTask", "🎸 Soul Guitar | Auto Chest: Picking up chest...")
             local hasMore = _SgRunChestBatch()
             if not hasMore then
                 _SgChestPhaseDone = true
@@ -5089,7 +5123,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 Remotes.CommF_:InvokeServer("Blackbeard", "Spawn")
             end)
             task.wait(1)
-            SetTask('MainTask', '🎸 Soul Guitar: Đánh Blackbeard để lấy Dark Fragment')
+            SetTask('MainTask', '🎸 Soul Guitar: Fighting Blackbeard to get Dark Fragment')
             CombatController.Attack("Blackbeard")
 
         elseif k == 7 then
@@ -5102,7 +5136,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
         elseif k == 1 then
             if SeaIndex ~= 2 then
-                SetTask("SubTask", '🎸 Soul Guitar: Teleport Sea 2 để farm ectoplasm')
+                SetTask("SubTask", '🎸 Soul Guitar: Teleport Sea 2 to farm ectoplasm')
                 SetTask("MainTask", 'Teleport to second sea to farm ectoplasm')
                 Remotes.CommF_:InvokeServer("TravelDressrosa")
                 return
@@ -5221,7 +5255,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         end
     end)
     -- ============================================================
-    -- KẾT THÚC PHẦN SOUL GUITAR
+    -- END OF SOUL GUITAR SECTION
     -- ============================================================
 
     -- ============================================================
@@ -5268,10 +5302,10 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if not Config.Items.CursedDualKatana then return end
         local k = ScriptStorage.Backpack
         if ScriptStorage.PlayerData.Level < 2200 then return end
-        -- [FIXED - theo spec] Trước đây thiếu mastery 350 thì chỉ `return`
-        -- im lặng, không chủ động làm gì. Giờ trả tín hiệu "trainSwords" để
-        -- Start() chuyển sang farm Bones tại Haunted Castle, check mastery
-        -- mỗi giây, chỉ khi CẢ HAI Yama+Tushita >= 350 mới cho CDK bắt đầu.
+        -- [FIXED - per spec] Previously, if mastery < 350 it just `returned`
+        -- silently without acting. Now it returns "trainSwords" signal so
+        -- Start() switches to farming Bones at Haunted Castle, checking mastery
+        -- every second; only when BOTH Yama+Tushita >= 350 does CDK start.
         if k["Cursed Dual Katana"] then return end
         if not k.Tushita or (k.Tushita.Mastery or 0) < 350 or not k.Yama or (k.Yama.Mastery or 0) < 350 then
             return {"trainSwords"}
@@ -5309,15 +5343,15 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
         if not k then return end
         local W, h = k[1], k[2]
         if W == "Evil" and h == 3 then
-            -- [FIXED] Trước đây chỉ set ForceToRollBone=true rồi đứng im —
-            -- biến đó không có handler nào đọc, nên bước này bị TREO VĨNH
-            -- VIỄN. Thay bằng chuỗi thật: Bones → Hallow Essence → equip
-            -- tại toạ độ triệu hồi → Soul Reaper xuất hiện → đánh.
-            -- (verified từ main_red_magic_beta.txt + raw_6, khớp nhau)
+            -- [FIXED] Previously only set ForceToRollBone=true then stood still —
+            -- that variable had no handler reading it, so this step HUNG FOREVER.
+            -- Replaced with actual sequence: Bones → Hallow Essence → equip
+            -- at summon coordinates → Soul Reaper appears → fight.
+            -- (verified from main_red_magic_beta.txt + raw_6, they match)
             local HALLOW_SUMMON_CF = CFrame.new(-8932.86, 143.258, 6063.31)
 
             if ScriptStorage.Enemies['Soul Reaper'] then
-                -- Đã lên rồi → đánh, không cần làm gì thêm ở nhánh này
+                -- Already spawned → fight, no need for further actions
                 return k
             end
 
@@ -5325,22 +5359,22 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Hallow Essence"))
 
             if hasHallow then
-                SetTask('SubTask', 'CDK Quest / Dùng Hallow Essence triệu hồi Soul Reaper')
+                SetTask('SubTask', 'CDK Quest / Use Hallow Essence to summon Soul Reaper')
                 TweenController.Create(HALLOW_SUMMON_CF)
                 if CaculateDistance(HALLOW_SUMMON_CF) <= 8 then
                     FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Hallow Essence")
                 end
                 return
             else
-                -- [FIXED] Ngưỡng thật là 500 Bones, không phải 50 — verified
-                -- từ raw_6.txt ("CheckItem(Bones) > 500"). Dưới 500 thì farm
-                -- tiếp, KHÔNG bắn Buy (dư/thiếu bones lẻ tẻ không đủ đổi).
+                -- [FIXED] Actual threshold is 500 Bones, not 50 — verified
+                -- from raw_6.txt ("CheckItem(Bones) > 500"). If below 500, farm
+                -- more, do NOT trigger Buy (odd number of bones insufficient for exchange).
                 local bonesCount = Remotes.CommF_:InvokeServer("Bones", "Check")
                 SetTask('SubTask', 'CDK Quest / Farm Bones cho Hallow Essence (' .. tostring(bonesCount) .. '/500)')
 
                 if bonesCount and bonesCount > 500 then
-                    -- [FIXED] Đủ 500 → xả hết 1 lượt (verified: repeat Buy(1,1)
-                    -- cho tới khi Check == 0), không nhỏ giọt từng lần 1 nữa
+                    -- [FIXED] 500 reached → dump all in one turn (verified: repeat Buy(1,1)
+                    -- until Check == 0), no longer drip-feeding one by one
                     repeat
                         Remotes.CommF_:InvokeServer("Bones", "Buy", 1, 1)
                         task.wait(0.2)
@@ -5351,9 +5385,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
                 if not ScriptStorage.Enemies["Reborn Skeleton"] and not ScriptStorage.Enemies["Living Zombie"]
                     and not ScriptStorage.Enemies["Demonic Soul"] and not ScriptStorage.Enemies["Posessed Mummy"] then
-                    -- [NEW] Chưa thấy xác gần đây → di chuyển tới đúng điểm
-                    -- farm Haunted Castle thay vì đứng im chờ
-                    SetTask('SubTask', 'CDK Quest / Di chuyển tới Haunted Castle farm Bones')
+                    -- [NEW] Corpse not found nearby → move to correct point
+                    -- farm Haunted Castle instead of standing still waiting
+                    SetTask('SubTask', 'CDK Quest / Move to Haunted Castle to farm Bones')
                     TweenController.Create(HAUNTED_CASTLE_BONES_CF)
                     return
                 end
@@ -5430,10 +5464,10 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     FunctionsHandler.CursedDualKatana:RegisterMethod("Start", function(k)
         local W = workspace.Map.Turtle.Cursed
         if k[1] == "trainSwords" then
-            -- [NEW - theo spec] Yama/Tushita chưa đủ 350 mastery — farm
-            -- Bones tại Haunted Castle, trang bị đúng kiếm đang thiếu để
-            -- mastery tính đúng vũ khí. Bones thu được dùng chung cho Fire
-            -- Essence (Dragon Talon) và Hallow Essence (CDK) sau này.
+            -- [NEW - per spec] Yama/Tushita under 350 mastery — farm
+            -- Bones at Haunted Castle, equip the specific missing sword to
+            -- ensure mastery is calculated for the correct weapon. Bones collected are shared for Fire
+            -- Essence (Dragon Talon) and Hallow Essence (CDK) later.
             local bp = ScriptStorage.Backpack
             local tushitaMastery = bp.Tushita and bp.Tushita.Mastery or 0
             local yamaMastery    = bp.Yama and bp.Yama.Mastery or 0
@@ -5450,7 +5484,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
 
             if swordToTrain == "buy_tushita" or swordToTrain == "buy_yama" then
-                SetTask('MainTask', 'CDK Prep | Chưa có ' .. (swordToTrain == "buy_tushita" and "Tushita" or "Yama") .. ' — chờ Tushita/Yama handler mua')
+                SetTask('MainTask', 'CDK Prep | Not yet acquired ' .. (swordToTrain == "buy_tushita" and "Tushita" or "Yama") .. ' — waiting for Tushita/Yama handler to buy')
                 return
             end
 
@@ -5464,7 +5498,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
 
             if not ScriptStorage.Enemies["Reborn Skeleton"] and not ScriptStorage.Enemies["Living Zombie"]
                 and not ScriptStorage.Enemies["Demonic Soul"] and not ScriptStorage.Enemies["Posessed Mummy"] then
-                SetTask('SubTask', 'CDK Prep | Di chuyển tới Haunted Castle')
+                SetTask('SubTask', 'CDK Prep | Move to Haunted Castle')
                 TweenController.Create(HAUNTED_CASTLE_BONES_CF)
                 return
             end
@@ -5486,14 +5520,14 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 fireproximityprompt(workspace.Map.Turtle.Cursed.Pedestal3.ProximityPrompt)
                 task.wait(1)
                 pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
-                -- [FIXED - bớt delay theo yêu cầu boss man] 10s → 5s. Đây là
-                -- chờ respawn sau self-kill, 5s vẫn đủ dư so với thời gian
-                -- respawn thực tế (thường 2-3s) của Blox Fruits.
+                -- [FIXED - reduced delay per boss man's request] 10s → 5s. This is
+                -- waiting for respawn after self-kill, 5s is still more than enough compared to
+                -- actual respawn time (usually 2-3s) of Blox Fruits.
                 task.wait(5)
             else
                 CDKAttempts = (CDKAttempts or 0) + 1
                 TweenController.Create(CFrame.new(-12341.66796875, 603.3455810546875, -6550.6064453125))
-                -- [FIXED - bớt delay theo yêu cầu boss man] 5s/5s → 3s/3s
+                -- [FIXED - reduced delay per boss man's request] 5s/5s → 3s/3s
                 task.wait(3)
                 pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
                 task.wait(3)
@@ -5636,12 +5670,15 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
     spawn(function()
         GetServers()
-        -- [FIXED - bớt delay theo yêu cầu boss man] 180s → 90s. Không rút
-        -- sâu hơn nữa để tránh spam API server-list của Roblox (public API
-        -- có rate-limit thật), 90s vẫn đủ nhanh để danh sách hop không bị cũ.
+        -- [FIXED - reduced delay as requested by boss man] 180s → 90s. Do not
+        -- reduce further to avoid spamming the Roblox server-list API (public API
+        -- has a real rate-limit), 90s is still fast enough so the hop list doesn't get outdated.
         while task.wait(90) do GetServers() end
     end)
     function Hop(k, W)
+        -- [IMPROVED v2.3] Standardized k as a number. The old version compared directly
+        -- (ServerData.Players < k), so calling Hop('Autohop') as a string would cause an error.
+        local maxPlr = tonumber(k)
         local h = GetServers()
         local X = {}
         for w, D in h do
@@ -5653,7 +5690,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                 local h = math.random(1, #X)
                 ServerData = X[h]
                 if ServerData then
-                    if not k or ServerData.Players < k then
+                    if not maxPlr or ServerData.Players < maxPlr then
                         if not W or ServerData.Regoin == W then
                             print("Found Server:", ServerData.JobId, "Player Count:", ServerData.Players, 'Region:', ServerData.Region)
                             break
@@ -5704,7 +5741,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     Storage.Data = {}
     if readfile then pcall(function() Storage.Data = Decode(readfile(k) or '{}') end) end
     spawn(function() while task.wait(Storage.WRITE_DELAY) do Storage:Save() end end)
-    CreateTraceback('Initalize', "Initalizing script..")
+    CreateTraceback('Initalize', "Initializing script..")
     local k = {}
     SetTask("MainTask", 'Level Farming')
     SetTask("SubTask", "Idle")
@@ -5750,13 +5787,13 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end)
     SetText("MainTextLabel", 'Loaded In ' .. tick() - StartTick .. 'ms!')
     -- ============================================================
-    -- [REPLACED] FPS BOOSTER — hàm cũ EnableFpsBoost() có "if true then
-    -- return end" ngay dòng đầu, khiến TOÀN BỘ ~100 dòng optimize không
-    -- bao giờ chạy dù Config.Configuration.FpsBoost = true hay false.
-    -- Thay bằng logic raw9jjs.txt (đơn giản, verified hoạt động): chuyển
-    -- xám toàn bộ map + nhân vật, tắt particle/trail, hạ QualityLevel.
-    -- Theo dõi DescendantAdded liên tục — object mới spawn ra (quái, boss,
-    -- item) cũng tự động bị áp dụng, không cần chạy lại thủ công.
+    -- [REPLACED] FPS BOOSTER — the old EnableFpsBoost() function had "if true then
+    -- return end" on the first line, causing ALL ~100 lines of optimization to
+    -- never run regardless of whether Config.Configuration.FpsBoost was true or false.
+    -- Replaced with raw9jjs.txt logic (simple, verified working): turn
+    -- the entire map + characters gray, disable particles/trails, lower QualityLevel.
+    -- Continuously monitor DescendantAdded — newly spawned objects (mobs, bosses,
+    -- items) are also automatically applied, no need to run manually.
     -- ============================================================
     local function GrayAndOptimize(object)
         if object:IsA("BasePart") or object:IsA("MeshPart") or object:IsA("UnionOperation") then
@@ -5802,16 +5839,16 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     player.CharacterAdded:Connect(onCharacterAdded)
                 end)
 
-                -- [FIXED - LAG] task.wait(0.1) TRONG event handler chạy cho
-                -- MỌI object thêm vào workspace là nguồn lag rất lớn — lúc
-                -- farm boss/raid/quest, hàng trăm object sinh ra mỗi giây
-                -- (particle, projectile, xác quái, hiệu ứng đòn đánh...),
-                -- MỖI CÁI đều tạo 1 lần yield 100ms → dồn ứ lịch chạy, đúng
-                -- khớp mô tả "farm boss/lv/quest rất lag" của boss man.
-                -- Bỏ hẳn wait, không cần thiết (set Color/Material ngay sau
-                -- khi object được tạo là an toàn). Thêm lọc loại object
-                -- SỚM để khỏi tốn pcall cho thứ chắc chắn không liên quan
-                -- đồ hoạ (Script, Sound, Folder, Value...).
+                -- [FIXED - LAG] task.wait(0.1) INSIDE the event handler running for
+                -- EVERY object added to the workspace is a huge source of lag — during
+                -- boss/raid/quest farming, hundreds of objects are created per second
+                -- (particles, projectiles, mob corpses, hit effects...),
+                -- EACH one creates a 100ms yield → piling up the execution queue, exactly
+                -- matches "farm boss/lv/quest very laggy" description from boss man.
+                -- Completely removed wait, unnecessary (setting Color/Material immediately
+                -- after object creation is safe). Added object type filtering
+                -- EARLY to avoid wasting pcall on things definitely not
+                -- graphics (Script, Sound, Folder, Value...).
                 local GRAYABLE_CLASSES = {
                     BasePart = true, MeshPart = true, UnionOperation = true,
                     Decal = true, Texture = true, ParticleEmitter = true,
@@ -5823,7 +5860,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     pcall(GrayAndOptimize, descendant)
                 end)
 
-                print("[✅ FPS Boost] Đã bật gray mode + giảm đồ hoạ (raw9jjs)")
+                print("[✅ FPS Boost] Gray mode enabled + graphics reduced (raw9jjs)")
             end)
         end)
     end
@@ -5843,7 +5880,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     if os.time() - W > 30 then
                         if CaculateDistance(k) < 100 then
                             Hop('nearby plr')
-                            -- [FIXED - bớt delay theo yêu cầu boss man] 5s → 2s
+                            -- [FIXED - reduced delay per boss man's request] 5s → 2s
                             task.wait(2)
                         else
                             QueueList[J.Name] = nil
@@ -5853,40 +5890,61 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             end
         end
     end
+    -- [IMPROVED v2.3] Split state loop into 2 rhythms: check sitting
+    -- (Sit) still every frame; RefreshPlayerData + UI update + writefile only
+    -- every 5s, and only writefile when seconds actually change. (Old version: writefile
+    -- + refresh EVERY FRAME — writing to file dozens of times/sec caused lag/disk wear.)
     task.spawn(function()
+        local lastWrote = nil
         while task.wait() do
             if not _G.Stop then
                 NearbyHopHandler()
-                if LocalPlayer.Character:FindFirstChild('Humanoid') and LocalPlayer.Character.Humanoid.Sit then
-                    LocalPlayer.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChild('Humanoid')
+                if hum and hum.Sit then
+                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
                 end
-                pcall(RefreshPlayerData)
-                local J = os.time() - timeee
-                local r = J + OldSessionTime
-                if writefile then pcall(writefile, ".tdif-" .. game.Players.LocalPlayer.Name, tostring(r)) end
-                if ScriptStorage.Interface then
-                    SetText('LiveTime', "Total Elapsed Time: " .. DispTime(r, true) .. ' Elapsed Time: ' .. DispTime(J, true))
+                if os.time() - (RefreshDebounce or 0) >= 5 then
+                    RefreshDebounce = os.time()
+                    pcall(RefreshPlayerData)
+                    local J = os.time() - timeee
+                    local r = J + OldSessionTime
+                    if r ~= lastWrote then
+                        lastWrote = r
+                        if writefile then pcall(writefile, ".tdif-" .. game.Players.LocalPlayer.Name, tostring(r)) end
+                    end
+                    if ScriptStorage.Interface then
+                        SetText('LiveTime', "Total Elapsed Time: " .. DispTime(r, true) .. ' Elapsed Time: ' .. DispTime(J, true))
+                    end
                 end
-                RefreshDebounce = os.time()
             end
         end
     end)
     AddPoint()
     Remotes.CommF_:InvokeServer("Cousin", 'Buy')
+    -- [IMPROVED v2.3] AutoHop: check every 60s, hop when online long enough
+    -- and flag is ON. (Old version: inverted condition + only ran once.)
     task.spawn(function()
-        task.wait(Config.Configuration.AutoHopDelay)
-        if not Config.Configuration.AutoHop then Hop('Autohop') end
+        while true do
+            task.wait(60)
+            local delay = (Config.Configuration and Config.Configuration.AutoHopDelay) or 3600
+            if Config.Configuration and Config.Configuration.AutoHop
+                and (os.time() - timeee) >= delay then
+                pcall(Hop) -- hop = change server = script restarts from beginning
+                return
+            end
+        end
     end)
 
     -- ============================================================
-    -- AUTO SEA 2 & 3 (CÁC THREAD RIÊNG)
+    -- AUTO SEA 2 & 3 (SEPARATE THREADS)
     -- ============================================================
     task.spawn(function()
         while task.wait(0.5) do
             if Config.AutoSea2 then
                 pcall(function()
                     if ScriptStorage.PlayerData.Level >= 700 and SeaIndex ~= 2 then
-                        _G.SeaTransitionActive = true  -- [ADDED] đồng bộ với AutoSea3, tránh LevelFarm giành tween
+                        _G.SeaTransitionActive = true  -- [ADDED] synchronize with AutoSea3 to prevent LevelFarm from stealing tween
                         local iceDoor = workspace.Map.Ice.Door
                         if iceDoor and iceDoor.CanCollide == true and iceDoor.Transparency == 0 then
                             Remotes.CommF_:InvokeServer("DressrosaQuestProgress", "Detective")
@@ -5904,7 +5962,7 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                         else
                             Remotes.CommF_:InvokeServer("TravelDressrosa")
                         end
-                        -- [ADDED] Check PlaceId thật để xác nhận đã sang Sea 2, timeout 60s tránh treo vĩnh viễn
+                        -- [ADDED] Check actual PlaceId to confirm arrival at Sea 2, 60s timeout to prevent permanent hang
                         local waitStart = tick()
                         repeat
                             task.wait(1)
@@ -5923,14 +5981,14 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
             if SeaIndex == 3 then _G.RipIndraBegun = false end
             if Config.AutoSea3 then
                 pcall(function()
-                    -- [FIXED] Thiếu "SeaIndex ~= 3" — trước đây vòng lặp này
-                    -- chạy MÃI MÃI kể cả sau khi đã ở Sea 3, tiếp tục gọi
-                    -- BartiloQuestProgress/tween mỗi 0.5s dù đã xong quest,
-                    -- có thể trả giá trị lạ và tween lung tung. AutoSea2 bên
-                    -- trên đã có sẵn check này, AutoSea3 bị thiếu do sót.
+                    -- [FIXED] Missing "SeaIndex ~= 3" — previously this loop
+                    -- ran FOREVER even after arriving at Sea 3, continuing to call
+                    -- BartiloQuestProgress/tween every 0.5s despite quest being finished,
+                    -- potentially returning strange values and random tweens. AutoSea2
+                    -- above already had this check, AutoSea3 missed it.
                     if ScriptStorage.PlayerData.Level >= 1500 and SeaIndex ~= 3 then
-                        -- [ADDED] Khóa LevelFarm lại — "bỏ mấy thứ làm dang dở
-                        -- khác" trong lúc đang xử lý quest/di chuyển sang Sea 3
+                        -- [ADDED] Lock LevelFarm — "drop other unfinished tasks"
+                        -- while processing quest/moving to Sea 3
                         _G.SeaTransitionActive = true
 
                         local bartiloProgress = Remotes.CommF_:InvokeServer("BartiloQuestProgress", "Bartilo")
@@ -6008,9 +6066,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                 if zCheck == 0 then
                                     local rip_indra = workspace.Enemies:FindFirstChild("rip_indra")
                                     if rip_indra and rip_indra:FindFirstChild("Humanoid") and rip_indra.Humanoid.Health > 0 then
-                                        -- [FIXED] Đánh XONG rồi CHỜ nó chết hẳn (giống pattern Ice
-                                        -- Admiral ở AutoSea2 — đã chạy đúng từ trước), thay vì đánh
-                                        -- 1 phát rồi thoát ra chờ vòng poll 0.5s sau mới biết kết quả
+                                        -- [FIXED] Finish attack then WAIT for death (matching Ice
+                                        -- Admiral pattern in AutoSea2 — previously correct), instead of attacking
+                                        -- once then exiting to wait for the 0.5s poll loop to see the result
                                         CombatController.Attack("rip_indra")
                                         repeat
                                             task.wait()
@@ -6019,9 +6077,9 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                            or not rip_indra.Parent
                                            or rip_indra.Humanoid.Health <= 0
 
-                                        -- [ADDED] Vừa xác nhận chết xong → re-check + travel NGAY,
-                                        -- không đợi vòng poll 0.5s tiếp theo (giữ nhất quán với cách
-                                        -- AutoSea2 gọi TravelDressrosa ngay sau khi Ice Admiral chết)
+                                        -- [ADDED] Upon death confirmation → re-check + travel IMMEDIATELY,
+                                        -- don't wait for next 0.5s poll (maintain consistency with
+                                        -- AutoSea2 calling TravelDressrosa immediately after Ice Admiral dies)
                                         task.wait(1)
                                         local zAfterKill = Remotes.CommF_:InvokeServer("ZQuestProgress", "Check")
                                         if zAfterKill == 1 or zAfterKill == 2 then
@@ -6034,28 +6092,28 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                                         end
 
                                     elseif not rip_indra then
-                                        -- [FIXED] CHỈ gọi "Begin" khi rip_indra CHƯA TỪNG spawn —
-                                        -- trước đây branch else này bắt luôn cả trường hợp "vừa giết
-                                        -- xong, xác còn đó Health=0", gọi lại Begin liên tục reset
-                                        -- quest → zCheck không bao giờ lên 1 → không bao giờ travel.
+                                        -- [FIXED] ONLY call "Begin" when rip_indra HAS NEVER spawned —
+                                        -- previously the else branch caught "just killed, body still there Health=0",
+                                        -- calling Begin repeatedly resetting quest → zCheck never reached 1 → never traveled.
+                                        -- quest → zCheck never reaches 1 → never travels.
                                         if not _G.RipIndraBegun then
                                             Remotes.CommF_:InvokeServer("ZQuestProgress", "Begin")
                                             _G.RipIndraBegun = true
                                         end
                                         TweenController.Create(CFrame.new(2288.80, 15.19, 863.03))
                                     else
-                                        -- rip_indra tồn tại nhưng Health<=0 (xác vừa chết, server
-                                        -- chưa kịp dọn) → KHÔNG gọi Begin, chỉ đợi rồi để vòng poll
-                                        -- 0.5s tiếp theo tự đọc lại zCheck (server cần chút thời gian)
+                                        -- rip_indra exists but Health<=0 (body just died, server
+                                        -- hasn't cleaned up yet) → DO NOT call Begin, just wait for the
+                                        -- next 0.5s poll to re-read zCheck (server needs a moment)
                                         task.wait(1)
                                     end
                                 elseif zCheck == 1 then
-                                    -- [ADDED] Đây là bước TELEPORT SANG PLACE KHÁC thật sự
-                                    -- (Sea 3 = PlaceId khác hẳn, không phải chỉ đổi map trong
-                                    -- cùng server). Gọi xong PHẢI đợi xác nhận qua game.PlaceId
-                                    -- rồi mới coi là xong — không thì code phía dưới (hoặc
-                                    -- LevelFarm) vẫn tưởng đang ở Sea 2, dùng HumanoidRootPart/
-                                    -- workspace CŨ đã bị hủy khi qua place mới → dịch tùm lum.
+                                    -- [ADDED] This is the actual TELEPORT TO ANOTHER PLACE step
+                                    -- (Sea 3 = completely different PlaceId, not just changing map in
+                                    -- the same server). After calling, MUST wait for confirmation via game.PlaceId
+                                    -- then consider it finished — otherwise the code below (or
+                                    -- LevelFarm) still thinks it's in Sea 2, using HumanoidRootPart/
+                                    -- OLD workspace that was destroyed when moving to a new place → teleporting randomly.
                                     Remotes.CommF_:InvokeServer("TravelZou")
                                     local waitStart = tick()
                                     repeat
@@ -6073,8 +6131,8 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                             end
                         end
                     else
-                        -- [ADDED] Level chưa đủ HOẶC đã ở Sea 3 rồi → không có
-                        -- lý do gì để khóa LevelFarm nữa, trả lại quyền farm bình thường
+                        -- [ADDED] Level not high enough OR already in Sea 3 → no
+                        -- no reason to lock LevelFarm anymore, return normal farming rights
                         _G.SeaTransitionActive = false
                     end
                 end)
@@ -6115,13 +6173,40 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
                     settings().Rendering.QualityLevel = "Level01"
                     settings().Rendering.GraphicsMode = "NoGraphics"
                 end
-                print("[✅ Anti Lag] Đã áp dụng tối ưu đồ họa!")
+                print("[✅ Anti Lag] Graphics optimization applied!")
+            end)
+        end)
+    end
+
+    -- [IMPROVED v2.3] BLACKSCREEN — Config.Configuration.blackscreen flag
+    -- previously NOT used anywhere. Enable = cover entire screen with a black layer
+    -- (reduces glare when AFK, status UI remains on top thanks to DisplayOrder).
+    if Config.Configuration and Config.Configuration.blackscreen then
+        task.spawn(function()
+            pcall(function()
+                local parent = Services.CoreGui
+                if not parent then parent = LocalPlayer:WaitForChild("PlayerGui") end
+                if parent:FindFirstChild("TiroBlackscreen") then
+                    parent.TiroBlackscreen:Destroy()
+                end
+                local gui = Instance.new("ScreenGui")
+                gui.Name = "TiroBlackscreen"
+                gui.DisplayOrder = 1
+                gui.IgnoreGuiInset = true
+                gui.ResetOnSpawn = false
+                local bg = Instance.new("Frame")
+                bg.Size = UDim2.new(1, 0, 1, 0)
+                bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+                bg.BorderSizePixel = 0
+                bg.Parent = gui
+                gui.Parent = parent
+                print("[Tiro] Blackscreen ON")
             end)
         end)
     end
 
     -- ============================================================
-    -- VÒNG LẶP CHÍNH
+    -- MAIN LOOP
     -- ============================================================
     while task.wait() do
         if Config.Configuration.HopWhenIdle and LastIdling and os.time() - LastIdling > 300.0 then
@@ -6145,15 +6230,19 @@ function W.Attack(target) pcall(function() _G.FastAttack = os.time() end) end
     end
 end
 
-hoangtuveu()
+-- [IMPROVED v2.3] NO longer calling hoangtuveu() here (moved to END OF FILE).
+-- The main loop inside it (while task.wait) NEVER exits, so all
+-- chunk-level code below (EXTRAS, VOID ATTACK, HEX UI — ~700 lines) previously
+-- NEVER ran. Moving the call to the end so those systems can
+-- register before the main loop occupies the main thread.
 --============================================================
 -- [EXTRAS] NO ANIMATION + AUTO REDEEM CODES + AUTO RANDOM FRUIT (GACHA)
--- Opções (pode editar/desligar):
+-- Options (can edit/disable):
 Config.Extras = {
-    NoAnimation      = true,   -- desliga as animações do personagem
-    AutoRedeemCodes  = true,   -- resgata todos os códigos no início
-    AutoGachaFruit   = true,   -- rola o Gacha (Random Fruit) automaticamente
-    GachaInterval    = 5,      -- segundos entre cada checagem do gacha
+    NoAnimation      = true,   -- disables character animations
+    AutoRedeemCodes  = true,   -- redeems all codes at the start
+    AutoGachaFruit   = true,   -- rolls Gacha (Random Fruit) automatically
+    GachaInterval    = 5,      -- seconds between each gacha check
 }
 --============================================================
 task.spawn(function()
@@ -6214,7 +6303,7 @@ task.spawn(function()
 
     local function GachaCall(ctx)
         local rf = getGachaRF()
-        if not rf then return false, "GachaNetworkRF nao encontrado" end
+        if not rf then return false, "GachaNetworkRF not found" end
         local ok, result = pcall(function()
             return rf:InvokeServer({
                 SpokeNPC = "Blox Fruit Gacha",
@@ -6232,7 +6321,7 @@ task.spawn(function()
                 local ok, result = GachaCall("Check")
                 if ok and typeof(result) == "table" and result.RequirementsMet then
                     local ok2, r2 = GachaCall("Purchase")
-                    print(ok2 and "[Gacha] Rolado com sucesso!" or ("[Gacha] Falha: " .. tostring(r2)))
+                    print(ok2 and "[Gacha] Rolled successfully!" or ("[Gacha] Failure: " .. tostring(r2)))
                 end
             end
         end
@@ -6627,7 +6716,7 @@ getgenv().VOidAttack = CFG
 end
 
 --============================================================
--- HEX HUB UI (extraída)
+-- HEX HUB UI (extracted)
 --============================================================
 task.spawn(function()
     local Players = game:GetService("Players")
@@ -6824,7 +6913,7 @@ task.spawn(function()
         end
     end)
 
-    -- inventario (2s)
+    -- inventory (2s)
     local _inventoryLabels = {}
     task.spawn(function()
         while task.wait(2) do
@@ -6853,3 +6942,10 @@ task.spawn(function()
 
     getgenv().HexUI = UI
 end)
+
+--============================================================
+-- [IMPROVED v2.3] Run main loop AT THE END OF FILE (instead of line ~6148).
+-- All chunk-level systems above (EXTRAS/redeem/gacha, VOID ATTACK,
+-- HexUI) are now registered before the main loop takes the main thread.
+--============================================================
+hoangtuveu()
